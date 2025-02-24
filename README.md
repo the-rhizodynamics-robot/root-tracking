@@ -1,6 +1,27 @@
+Let's setup like:
+
+project_name/
+├── README.md
+├── setup.py
+├── requirements.txt
+├── .dockerignore
+├── .gitignore
+├── Dockerfile
+├── src/
+│   ├── __init__.py
+│   ├── main.py
+│   ├── module1.py
+│   └── module2.py
+└── tests/
+    ├── __init__.py
+    ├── test_module1.py
+    └── test_module2.py
+
+
 To do:
 
-set up github/workflows
+set up github/workflows'
+
 
 Move code to image.
 
