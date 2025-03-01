@@ -1,4 +1,4 @@
-FROM ghcr.io/the-rhizodynamics-robot/file-sorting-env@latest
+FROM ghcr.io/the-rhizodynamics-robot/file-sorting-env:latest
 
 # Install JupyterLab
 RUN pip install --no-cache-dir jupyterlab
