@@ -7,11 +7,10 @@ def setup_paths():
     # Add the /app/src directory to the Python path
     sys.path.append('/app/src')
 
-    import src.myutilities.constants as c
     import src.myutilities.box as box
     import src.myutilities.util as util
     import src.retnet.model as model
-    return c, box, util, model
+    return box, util, model
 
 def seed_localization_and_tip_tracking(data_path, seed_model):
     import src.myutilities.box as box
@@ -19,7 +18,6 @@ def seed_localization_and_tip_tracking(data_path, seed_model):
     import gc
 
     box_list = util.listdir_nohidden(os.path.join(data_path, "stabilized"))
-    outputs = []
     print(box_list)
 
     for expt in box_list:
@@ -36,5 +34,5 @@ def seed_localization_and_tip_tracking(data_path, seed_model):
             b.germination_detection(save_tip_sample=False, threshold_multiplier=1.5, automatic=False)
             b.tip_trace_pcv(384, threshold_multiplier=1.5, bound_radius=30)
             b.validate_save_tracking()
-            del 
+            del b
             gc.collect() 
