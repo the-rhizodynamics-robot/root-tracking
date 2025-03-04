@@ -1,16 +1,17 @@
+sys.path.append('/app/src')
 import sys
 import os
 from matplotlib import pyplot as plt
 plt.rcParams['figure.figsize'] = [10, 10]
 
-def setup_paths():
-    # Add the /app/src directory to the Python path
-    sys.path.append('/app/src')
 
-    import src.myutilities.box as box
-    import src.myutilities.util as util
-    import src.retnet.model as model
-    return box, util, model
+import src.myutilities.box as box
+import src.myutilities.util as util
+import src.retnet.model as model
+return box, util, model
+seed_model = model.SeedModel("/app/models/SeedInference.h5")
+data_dir = '/app/data'
+results_dir = '/app/results'
 
 def seed_localization_and_tip_tracking(data_path, seed_model):
     import src.myutilities.box as box
