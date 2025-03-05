@@ -17,31 +17,6 @@ def listdir_nohidden(path):
     """
     return [f for f in sorted(os.listdir(path)) if not f.startswith('.')]
 
-
-def sync_for_rstudio():
-    """Wrapper for rsync. Syncs csv files of tip coordinates to Rstudio user folder (because Rstudio Server requires a dedicated non-super user).
-    The source and destination directories are set in the constants.py file variables QUANTIFICATION_OUT_PATH and RSTUDIO_OUT_PATH, respectively.
-    """
-    
-    in_path = c.QUANTIFICATION_OUT_PATH + "tip_coordinates/"
-    out_path = c.RSTUDIO_OUT_PATH + "tip_coordinates/"
-    command = "sudo rsync -t " +  in_path + "*.csv " + out_path
-    subprocess.call(command,shell=True)
-    print(command)
-    
-
-#NEED TO TROUBLESHOOT THIS
-def sync_traced_tips():
-    """Wrapper for rsync. Syncs traced tip videos to bucket.
-    The source and destination directories are set in the constants.py file variables QUANTIFICATION_OUT_PATH and TRACED_TIPS_VIDS_PATH, respectively.
-    """
-    
-    in_path = c.QUANTIFICATION_OUT_PATH + "stabilized_videos_single_seed/"
-    out_path = c.TRACED_TIPS_VIDS_BUCKET_PATH
-    command = "gsutil rsync " +  in_path + " " + out_path
-    subprocess.call(command,shell=True)
-    print(command)
-    
 def archive(source : str):
     """Function to clear out pre_quantification_stabilized directory and move experiment folders to pre_quantificaiton archive. Need to build in a way to clear
     archive because disk will rapidly fill up. Maybe check about removing existing directories when running this function?
@@ -152,32 +127,7 @@ def unspool_video(full_path : str, out_dir : str, remove : bool = False):
     
     if (remove):
         os.remove(full_path)
-    
-def copy_videos(video_list : tuple, source = "unstabilized", dest = c.QUANTIFICATION_IN_PATH + "to_unspool//"):
-    """
-    This function copies videos from the cloud bucket to a local directory.
-    
-    Parameters
-    ----------
-    video_list : tuple
-        A tuple containing the experiment numbers to be copied
-    dest : str
-        Location on the instance to copy the videos. Default is to_unspool/ in pre_quantification
-    source  : str
-        Location from where to copy videos (stabilized or unstabilized)
-    """
-    for v in video_list:
-        if source == "stabilized":
-            try:
-                shutil.copyfile(c.STABILIZED_VIDEO_PATH + str(v) + ".mp4", dest + str(v) + ".mp4") 
-            except:
-                print("Unable to copy video " + str(v) +". Perhaps you are trying to move a video from stabilized directory that wasn't stabilized?")
-        else:
-            try:
-                shutil.copyfile(c.VIDEO_BUCKET_PATH + str(v) + ".mp4", dest + str(v) + ".mp4") 
-            except:
-                print("Unable to copy video " + str(v) +". Perhaps there was a type?")
-                
+      
 def empty_trash():
     """
     When you delete files from Jupyter lab they are put into a trash directory. This will clear that directory.
