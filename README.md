@@ -30,5 +30,10 @@ docker run -it --rm -p 8888:8888 jupyterlab
 
 draft python runner (webbrowser is built in). Maybe consider singularity?
 
+Requirements:
+
+-Python 3.X
+
+-Docker
 
 
