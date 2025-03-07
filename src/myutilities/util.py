@@ -1,14 +1,12 @@
-import src.myutilities.constants as c
 import subprocess
 import shutil
 import time
+import os
 
 """
 General purpose utility module for convenience functions
 
 """
-
-import os
 
 def listdir_nohidden(path):
     """
@@ -27,8 +25,8 @@ def archive(source : str):
         source directory to archive within pre_quantification. Usually "stabilized" or "unstabilized"
     """
     
-    in_path = c.QUANTIFICATION_IN_PATH + source + "/"
-    out_path = c.QUANTIFICATION_IN_PATH + "archive/"
+    in_path = "/app/data/"
+    out_path = "/app/results/archive/"
     old_expts = listdir_nohidden(out_path)
     new_expts = listdir_nohidden(in_path)
     

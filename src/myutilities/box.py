@@ -7,7 +7,6 @@ import src.retnet.model as retnet
 import cv2
 from plantcv import plantcv as pcv
 import csv
-import src.myutilities.constants as c
 import os
 from matplotlib import pyplot as plt
 from src.myutilities.image import Image
@@ -25,7 +24,7 @@ class Box:
     #This is the list where the raw images will be stored in memory. This will be quite large, which is why the call to the garbage collector is necessary between analysis of each box.
     images = []
     
-    def __init__(self, path, save_path = c.QUANTIFICATION_OUT_PATH):
+    def __init__(self, path, save_path = "/app/data/"):
         """
         Attributes
         ----------
@@ -216,7 +215,7 @@ class Box:
         for seed in self.seeds:
             if seed.germination_indicator:
                 seed.tip_trace_pcv(self.images, length = length, tot_length = len(self.images), threshold_multiplier = threshold_multiplier, bound_radius = bound_radius)
-                seed.make_video(self.images, c.QUANTIFICATION_OUT_PATH + "/stabilized_videos_single_seed" + f"/{self._qr_number}_{count}.mp4", trace_tip=True)
+                seed.make_video(self.images,  "/app/results/stabilized_videos_single_seed" + f"/{self._qr_number}_{count}.mp4", trace_tip=True)
             count = count + 1
             #seed.tip_trace(self.images, tip_model, length=length, save_path=self._save_path)
             # TODO remove break
@@ -317,7 +316,7 @@ class Box:
                         print("Invalid response.")
                 if save1 == "y":
                     print("Saving coordinates.")
-                    with open(c.QUANTIFICATION_OUT_PATH + "tip_coordinates/" + f"/{self._qr_number}_{count}" + ".csv", 'w') as myfile:
+                    with open("/app/results/tip_coordinates/" + f"/{self._qr_number}_{count}" + ".csv", 'w') as myfile:
                         wr = csv.writer(myfile, quoting=csv.QUOTE_ALL)
                         wr.writerow(s.tip_coords_pcv)
                         #do some other saving stuff
@@ -363,7 +362,7 @@ class Box:
                     coords = s.tip_coords_pcv[:(s.curling_start_frame - s._tracking_start_frame)]
                     coords[-1,0] = 100000
                     coords[-1,1] = 100000
-                    with open(c.QUANTIFICATION_OUT_PATH + "tip_coordinates/" + f"/{self._qr_number}_{count}" + ".csv", 'w') as myfile:
+                    with open("/app/results/tip_coordinates/" + f"/{self._qr_number}_{count}" + ".csv", 'w') as myfile:
                         wr = csv.writer(myfile, quoting=csv.QUOTE_ALL)
                         wr.writerow(coords)
                         #do some other saving stuff
@@ -407,16 +406,18 @@ class Seed(Image):
 
     def germination_detection(self, images, seed_number,  save_path : str, threshold_multiplier : float = 1.5, save_tip_sample: bool = False, automatic : bool = True):
         if automatic:
-            self._tracking_start_frame, self.germination_x, self.germination_y = \
-                myutilities.tip_tracer.germination_detection_init(self, images, c.TMP_SHOWCASE_PATH, seed_number)
-            if save_tip_sample:
-                tip_corners = self.get_transform_crop_coords(self.germination_x - 30, self.germination_x + 30,
-                                                            self.germination_y - 30, self.germination_y + 30)
-                image = images[self._tracking_start_frame]
-                cv2.rectangle(image, (tip_corners.x1, tip_corners.y1), (tip_corners.x2, tip_corners.y2),
-                              c.COLOR_WHITE, c.MARKER_THICKNESS, cv2.LINE_AA)
+            pass
+            # NEED TO DEVELOP THIS. WAS NOT RELIABLE, AND WON'T RUN AS CURRENTLY WRITTEN.
+            # self._tracking_start_frame, self.germination_x, self.germination_y = \
+            #     myutilities.tip_tracer.germination_detection_init(self, images, c.TMP_SHOWCASE_PATH, seed_number)
+            # if save_tip_sample:
+            #     tip_corners = self.get_transform_crop_coords(self.germination_x - 30, self.germination_x + 30,
+            #                                                 self.germination_y - 30, self.germination_y + 30)
+            #     image = images[self._tracking_start_frame]
+            #     cv2.rectangle(image, (tip_corners.x1, tip_corners.y1), (tip_corners.x2, tip_corners.y2),
+            #                   c.COLOR_WHITE, c.MARKER_THICKNESS, cv2.LINE_AA)
 
-                io.save_image(io.to_pil(image), save_path + f"/germination_seed{seed_number}.png")
+            #     io.save_image(io.to_pil(image), save_path + f"/germination_seed{seed_number}.png")
         else:
             print("Finding germination frame for seed " + str(seed_number))
             first = 0
@@ -606,11 +607,11 @@ class Seed(Image):
                     if self.tip_coords_pcv[y][0] != 10000:
                         cv2.line(frame, (self.tip_coords_pcv[y][0], self.tip_coords_pcv[y][1]),
                                  (self.tip_coords_pcv[y + 1][0], self.tip_coords_pcv[y + 1][1]),
-                                 c.COLOR_WHITE, c.MARKER_THICKNESS)
+                                 (255, 0, 0), 3)
 
                         cv2.line(black, (self.tip_coords_pcv[y][0], self.tip_coords_pcv[y][1]),
                                  (self.tip_coords_pcv[y + 1][0], self.tip_coords_pcv[y + 1][1]),
-                                 c.COLOR_WHITE, c.MARKER_THICKNESS)
+                                 (255, 0, 0), 3)
                         
                 # crop image based on boundaries
                 original = original[y1:y2, x1:x2]
