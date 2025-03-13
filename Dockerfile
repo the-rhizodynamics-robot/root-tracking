@@ -7,8 +7,9 @@ RUN pip install --no-cache-dir jupyterlab
 WORKDIR /app
 
 # Copy the notebooks and src directories into the container
-COPY notebooks/ /app/notebooks/
+COPY code/ /app/code/
 COPY src/ /app/src/
+ENV PYTHONPATH="/app/src/"
 
 # Expose JupyterLab port
 EXPOSE 8888
