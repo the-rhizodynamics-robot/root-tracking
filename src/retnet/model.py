@@ -16,7 +16,7 @@ class Model(ABC):
         self.model_path = model_path
         print("Loading MODEL: {}".format(model_path))
         self.model = models.load_model(model_path, backbone_name="resnet50")
-        self._confidence_cutoff = confidence_cutoff
+        self.cutoff = confidence_cutoff
         model_name = os.path.normpath(model_path)
         self.model_name = os.path.split(model_name)[1]
 

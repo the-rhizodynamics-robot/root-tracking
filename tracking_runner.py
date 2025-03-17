@@ -2,10 +2,17 @@ import os
 import subprocess
 import webbrowser
 import sys
+import argparse
 
-# Ask user for data and results paths
-data_dir = input("Enter path to image data (default: ./data): ") or "./data"
-results_dir = input("Enter path to save results (default: ./results): ") or "./results"
+# Set up argument parser
+parser = argparse.ArgumentParser(description='Run JupyterLab with specified data and results directories.')
+parser.add_argument('--data_dir', type=str, required=True, help='Path to image data directory')
+parser.add_argument('--results_dir', type=str, required=True, help='Path to save results directory')
+args = parser.parse_args()
+
+data_dir = args.data_dir
+results_dir = args.results_dir
+
 
 # Ensure directories exist
 os.makedirs(data_dir, exist_ok=True)
