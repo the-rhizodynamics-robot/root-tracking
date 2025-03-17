@@ -46,7 +46,7 @@ class Box:
         self._qr_number = os.path.basename(os.path.normpath(self._path))
         self._save_path = os.path.normpath(save_path) + f"/{self._qr_number}"
         my_list = util.listdir_nohidden(self._path)
-        my_list = [self._path + l for l in my_list]
+        my_list = [os.path.join(self._path, l) for l in my_list]
         with concurrent.futures.ThreadPoolExecutor() as executor:
             all_images = executor.map(io.read_image_single_channel, my_list)
         self.images = [img for img in all_images] # numpy array of images, grayscale mode

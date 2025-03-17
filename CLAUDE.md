@@ -25,3 +25,6 @@
 - Box: Bounding box representation with transformation methods
 - Image: Image processing and manipulation utilities
 - PlantCV integration for plant phenotyping
+
+## Things to keep in mind
+- Be succinct. Too many lines of code is confusing. Put comments at the end of lines of code to reduce the number of lines used.
