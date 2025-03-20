@@ -316,6 +316,7 @@ class Box:
                         print("Invalid response.")
                 if save1 == "y":
                     print("Saving coordinates.")
+                    os.makedirs("/app/results/tip_coordinates/", exist_ok=True)
                     with open("/app/results/tip_coordinates/" + f"/{self._qr_number}_{count}" + ".csv", 'w') as myfile:
                         wr = csv.writer(myfile, quoting=csv.QUOTE_ALL)
                         wr.writerow(s.tip_coords_pcv)
