@@ -1,20 +1,4 @@
-TRACKING TO DO:
-FOR TRACKING: NEED TO ECONOMIZE AND NOT READ ALL IMAGES IN AT ONCE.
 
-NEED TO HIGHLIGHT GERMINATION POINT> IT IS LIKE BLACK NOW.
-
-Getting: FileNotFoundError: [Errno 2] No such file or directory: '/app/results/tip_coordinates//subset_1.csv'
-
-docker run -it --rm -v /home/iwtwb8/data/to_unspool/:/app/input   -v ~/:/app/output   r
-oot-tracking-env   python /app/code/unspool_stabilize.py --input_path /app/input --output_path /app/output
-
-maybe try this to not have permission issues:
-docker run -it --rm \
-  -u $(id -u):$(id -g) \
-  -v /path/to/input:/app/input \
-  -v /path/to/output:/app/output \
-  root-tracking-env \
-  python /app/code/script.py --input_path /app/input --output_path /app/output
   
 Let's setup like:
 
