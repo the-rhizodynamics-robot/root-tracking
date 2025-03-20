@@ -10,6 +10,7 @@ import csv
 import os
 from matplotlib import pyplot as plt
 from src.myutilities.image import Image
+from typing import List, Optional, Tuple, Dict
 
 class Box:
     """The box class defines the data derived from a single magenta box in an experiment.
@@ -20,9 +21,6 @@ class Box:
     location. For experiments where the seed is obscured (such as hyrdoponic growth where the seed is in 
     a holder) ro where the neural net fails to find one or more seeds, there is a grid based manual seed location method.
     """
-    
-    #This is the list where the raw images will be stored in memory. This will be quite large, which is why the call to the garbage collector is necessary between analysis of each box.
-    images = []
     
     def __init__(self, path, save_path = "/app/data/"):
         """
@@ -37,23 +35,115 @@ class Box:
             the experiment number of the box, parsed from the full path, and kept as a string
         my_list : list
             list of paths to all image files associated with this experiment
-        images : list
-            list of images in memory
+        image_paths : list
+            list of paths to all images in this experiment
+        _image_cache : dict
+            cache to store recently accessed images
+        _cache_limit : int
+            maximum number of images to keep in cache
         seeds : list
             list of seed objects within the box
         """
         self._path = path 
         self._qr_number = os.path.basename(os.path.normpath(self._path))
         self._save_path = os.path.normpath(save_path) + f"/{self._qr_number}"
-        my_list = util.listdir_nohidden(self._path)
-        my_list = [os.path.join(self._path, l) for l in my_list]
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            all_images = executor.map(io.read_image_single_channel, my_list)
-        self.images = [img for img in all_images] # numpy array of images, grayscale mode
-        self.seeds = [] # Seed objects
-    
         
-    def init_seeds(self, seed_model: retnet.SeedModel, automatic : bool = True):
+        # Store image paths instead of loading all images
+        self.image_paths = util.listdir_nohidden(self._path)
+        self.image_paths = [os.path.join(self._path, l) for l in self.image_paths]
+        
+        # Image cache system
+        self._image_cache = {}
+        self._cache_limit = 20  # Adjust this number based on memory requirements
+        
+        # For compatibility with existing code
+        self.seeds = []
+    
+    def get_image(self, index: int) -> np.ndarray:
+        """
+        Load an image by its index, using the cache if available.
+        
+        Parameters
+        ----------
+        index : int
+            Index of the image to load
+            
+        Returns
+        -------
+        np.ndarray
+            The image as a numpy array
+        """
+        # Check if the image is already in cache
+        if index in self._image_cache:
+            return self._image_cache[index]
+        
+        # Load the image
+        if 0 <= index < len(self.image_paths):
+            image = io.read_image_single_channel(self.image_paths[index])
+            
+            # Add to cache
+            if len(self._image_cache) >= self._cache_limit:
+                # Remove the least recently used image (simple implementation)
+                oldest_key = next(iter(self._image_cache))
+                del self._image_cache[oldest_key]
+            
+            self._image_cache[index] = image
+            return image
+        else:
+            raise IndexError(f"Image index {index} out of range (0-{len(self.image_paths)-1})")
+    
+    def get_images(self, start_idx: int, end_idx: int) -> List[np.ndarray]:
+        """
+        Get a range of images using parallel loading for efficiency.
+        
+        Parameters
+        ----------
+        start_idx : int
+            Starting index (inclusive)
+        end_idx : int
+            Ending index (exclusive)
+            
+        Returns
+        -------
+        List[np.ndarray]
+            List of loaded images
+        """
+        # Validate indices
+        if start_idx < 0 or end_idx > len(self.image_paths) or start_idx >= end_idx:
+            raise IndexError(f"Invalid range: {start_idx} to {end_idx}")
+        
+        # Check which images are already cached
+        to_load = [i for i in range(start_idx, end_idx) if i not in self._image_cache]
+        
+        # Load missing images in parallel
+        if to_load:
+            paths_to_load = [self.image_paths[i] for i in to_load]
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                loaded_images = executor.map(io.read_image_single_channel, paths_to_load)
+                
+            # Update cache with newly loaded images
+            for idx, img in zip(to_load, loaded_images):
+                if len(self._image_cache) >= self._cache_limit:
+                    oldest_key = next(iter(self._image_cache))
+                    del self._image_cache[oldest_key]
+                self._image_cache[idx] = img
+        
+        # Return all images in the requested range
+        return [self._image_cache[i] for i in range(start_idx, end_idx)]
+    
+    def get_first_image(self) -> np.ndarray:
+        """Get the first image for seed detection and initialization."""
+        return self.get_image(0)
+    
+    def get_last_image(self) -> np.ndarray:
+        """Get the last image for manual seed detection."""
+        return self.get_image(len(self.image_paths) - 1)
+    
+    def get_total_images(self) -> int:
+        """Get the total number of images."""
+        return len(self.image_paths)
+        
+    def init_seeds(self, seed_model: retnet.SeedModel, automatic: bool = True):
         """
         This method optionally runs automatic seed detection. It can also manually define regions of seeds. It then creates the appropriate number of seed objects associated with the respective box objects.
         
@@ -68,15 +158,15 @@ class Box:
         seed_model._confidence_cutoff = .3
         #only run if "automatic mode" of seed detection is desired.
         if automatic:
-            initial_image = np.copy(self.images[0])
-            y,x =  initial_image.shape
+            initial_image = np.copy(self.get_first_image())
+            y,x = initial_image.shape
             startx = x//2-(1000)
             initial_image[:,0:startx] = 0
             initial_image[:,(startx+2000):x] = 0
             seeds_full, scores = seed_model.detect(image_arr=cv2.cvtColor(initial_image, cv2.COLOR_GRAY2BGR),
                                           sort=True)
             
-            disp = cv2.cvtColor(self.images[0], cv2.COLOR_GRAY2BGR)
+            disp = cv2.cvtColor(self.get_first_image(), cv2.COLOR_GRAY2BGR)
             plt.imshow(disp)
             plt.show()
             
@@ -95,10 +185,10 @@ class Box:
                 seeds.append(seeds_full[index])   
             print(len(seeds))
           
-
+            first_image = self.get_first_image()
             for count, seed in enumerate(seeds):
-                if ((seed.y1 > (.1 * np.shape(self.images[0])[0])) and (seed.y1 < (.9 * np.shape(self.images[0])[0]))):
-                    if ((seed.x1 > (.1 * np.shape(self.images[0])[1])) and (seed.x1 < (.9 * np.shape(self.images[0])[1]))):
+                if ((seed.y1 > (.1 * np.shape(first_image)[0])) and (seed.y1 < (.9 * np.shape(first_image)[0]))):
+                    if ((seed.x1 > (.1 * np.shape(first_image)[1])) and (seed.x1 < (.9 * np.shape(first_image)[1]))):
                         self.seeds.append(Seed(seed, self._qr_number, count + 1))
 
             for s in self.seeds:
@@ -130,8 +220,8 @@ class Box:
         print("Manual seed localization:")
         self.seeds = []
         
-        first = cv2.cvtColor(self.images[0], cv2.COLOR_GRAY2BGR)
-        last = cv2.cvtColor(self.images[-1], cv2.COLOR_GRAY2BGR)
+        first = cv2.cvtColor(self.get_first_image(), cv2.COLOR_GRAY2BGR)
+        last = cv2.cvtColor(self.get_last_image(), cv2.COLOR_GRAY2BGR)
         
         for r in range(0, np.shape(first)[1], 500):
             first = cv2.line(first, (r, 0), (r, np.shape(first)[0]), (0, 255, 0), thickness=5) 
@@ -144,13 +234,6 @@ class Box:
         disp = np.concatenate((first, last), axis = 1)
         plt.imshow(disp)
         plt.show()
-        
-#         while True:
-#             num_seeds = input("How many seeds are in this box?")
-#             if num_seeds.isdigit():
-#                 break
-#             else:
-#                 print("non-numeric entry")
         
         for s in range(int(num_seeds)):
             while True:
@@ -197,110 +280,83 @@ class Box:
                 if cont == "y":
                     self.seeds.append(Seed(Image(germ_region, x1 = int(left_x), y1 = int(top_y), x2 = int(right_x), y2 = int(bottom_y)), self._qr_number, s))
                     break
-         
 
 
-    def germination_detection(self, save_tip_sample : bool = False,  threshold_multiplier : float = 1.5, save_path : str = None, automatic : bool = True):
+    def germination_detection(self, save_tip_sample: bool = False, threshold_multiplier: float = 1.5, save_path: str = None, automatic: bool = True):
+        """
+        Detect germination for each seed.
+        
+        Parameters
+        ----------
+        save_tip_sample : bool
+            Whether to save tip samples
+        threshold_multiplier : float
+            Multiplier for thresholding
+        save_path : str
+            Path to save results
+        automatic : bool
+            Whether to use automatic detection
+        """
         count = 1
         if save_path is None:
             save_path = self._save_path
         for seed in self.seeds:
-            seed.germination_detection(self.images, count, save_path, threshold_multiplier = threshold_multiplier, automatic = automatic)
+            seed.germination_detection(self, count, save_path, threshold_multiplier=threshold_multiplier, automatic=automatic)
             count += 1
 
-    #Call to seed tip trace
-    #seed.tip_trace_pcv(b.images, length = 250)
-    def tip_trace_pcv(self, length : int = None, threshold_multiplier : float = 1.5, bound_radius : int = 30):
+    def tip_trace_pcv(self, length: int = None, threshold_multiplier: float = 1.5, bound_radius: int = 30):
+        """
+        Trace the tip of each germinated seed.
+        
+        Parameters
+        ----------
+        length : int
+            Number of frames to trace
+        threshold_multiplier : float
+            Multiplier for thresholding
+        bound_radius : int
+            Radius for bounding box
+        """
         count = 1
         for seed in self.seeds:
             if seed.germination_indicator:
-                seed.tip_trace_pcv(self.images, length = length, tot_length = len(self.images), threshold_multiplier = threshold_multiplier, bound_radius = bound_radius)
-                seed.make_video(self.images,  "/app/results/stabilized_videos_single_seed" + f"/{self._qr_number}_{count}.mp4", trace_tip=True)
+                seed.tip_trace_pcv(self, length=length, tot_length=self.get_total_images(), 
+                                  threshold_multiplier=threshold_multiplier, bound_radius=bound_radius)
+                # Get only the frames needed for the video
+                start_frame = seed._tracking_start_frame
+                end_frame = start_frame + len(seed.tip_coords_pcv)
+                images_for_video = self.get_images(start_frame, end_frame)
+                seed.make_video(images_for_video, "/app/results/stabilized_videos_single_seed" + f"/{self._qr_number}_{count}.mp4", trace_tip=True)
             count = count + 1
-            #seed.tip_trace(self.images, tip_model, length=length, save_path=self._save_path)
-            # TODO remove break
-            # break
 
-
-    def set_images(self, images):
-        self.images = images
+    def make_video(self, save_path: str = None, trace_tip: bool = False):
+        """
+        Make videos for each seed.
         
-    def print_images(self):
-        print(self.images)
-
-
-    def archive(self):
-        pass
-
-    def make_video(self, save_path:str = None, trace_tip: bool = False):
+        Parameters
+        ----------
+        save_path : str
+            Path to save videos
+        trace_tip : bool
+            Whether to trace tip in videos
+        """
         count = 1
         for seed in self.seeds:
             if save_path is None:
                 save_path = self._save_path
-            seed.make_video(self.images, save_path + f"/{self._qr_number}_tiptrace_seed{count}.mp4", trace_tip=trace_tip)
+                
+            # Only load the frames needed for this seed's video
+            start_frame = seed._tracking_start_frame
+            end_frame = start_frame + len(seed.tip_coords_pcv)
+            images_for_video = self.get_images(start_frame, end_frame)
+            
+            seed.make_video(images_for_video, save_path + f"/{self._qr_number}_tiptrace_seed{count}.mp4", trace_tip=trace_tip)
             count += 1
-            # break
 
-    def to_json(self):
-        # for x in range(len(self.images)):
-        #     self.images[x] = self.images[x].tolist()
-        #
-        #
-        # print(type(self.images[0]))
-        return json.dumps(self, default = self._serialize_json,
-                          sort_keys=True, indent=4)
-
-        pass
-
-    
-    # helper method
-    def _serialize_json(self):
-        return {
-            'path': self._path,
-            'qr_number': self._qr_number
-        }
-
-    # note can get rid of the qr_number since that is derived from path
-    def to_dict(self):
-        seeds = [i.to_dict() for i in self.seeds]
-        return {
-            "path": self._path,
-            "qr_number": self._qr_number,
-            "save_path": self._save_path,
-            "seeds": seeds
-        }
-
-
-
-
-    @classmethod
-    def from_dict(cls, dct: dict):
-        box = cls(dct.get("path"), dct.get("save_path"))
-        # need to save seed_coordinates to avoid running init_seeds
-        # running init_seeds would require passing seed_model
-        seeds = dct.get("seeds")
-        final_seeds = []
-        for seed_dct in seeds:
-            seed = Seed.from_dict(seed_dct, box.images[0])
-            final_seeds.append(seed)
-        box.seeds = final_seeds
-        return box
-
-    # override
-    # def default(self, obj):
-    #     if isinstance(obj, np.ndarray):
-    #         return obj.tolist()
-    #     return json.JSONEncoder.default(self, obj)
-    def denoise_all(self):
-        # 132 vs 30 seconds
-        start = time.time()
-        with concurrent.futures.ProcessPoolExecutor() as executor:
-            images = executor.map(retnet.TipModel.denoise, self.images)
-        self.images = [shift for shift in images]
-        print("time", time.time() - start)
-
-        
     def validate_save_tracking(self):
+        """
+        Validate tracking results and save coordinates if valid.
+        """
         count = 0
         for s in self.seeds:
             count = count + 1
@@ -320,10 +376,9 @@ class Box:
                     with open("/app/results/tip_coordinates/" + f"/{self._qr_number}_{count}" + ".csv", 'w') as myfile:
                         wr = csv.writer(myfile, quoting=csv.QUOTE_ALL)
                         wr.writerow(s.tip_coords_pcv)
-                        #do some other saving stuff
                 elif save1 =="c":
                     first = 0
-                    last = len(self.images) - 1
+                    last = self.get_total_images() - 1
                     x_tip_coords = s.tip_coords_pcv[0:,0]
                     y_tip_coords = s.tip_coords_pcv[0:,1]
                     x1 = min(x_tip_coords) - 50
@@ -332,9 +387,9 @@ class Box:
                     y2 = max(y_tip_coords) + 50
                     while True:
                         mid = int((first + last)/2)
-                        # calculate crop boundaries for tip video
-
-                        plt.imshow(self.images[mid][y1:y2, x1:x2])
+                        # Load just the needed image for this binary search step
+                        frame = self.get_image(mid)
+                        plt.imshow(frame[y1:y2, x1:x2])
                         plt.show()
                         while True:
                             direction = input("Does curling start (b)efore, (a)fter, (h)ere, do you need to (r)estart, or does it actually not curl (x)?")
@@ -353,7 +408,7 @@ class Box:
                                 break
                         elif direction == "r":
                             first = 0
-                            last = len(self.images) - 1
+                            last = self.get_total_images() - 1
                         elif direction == "a":
                             first = mid
                         elif direction == "b":
@@ -366,11 +421,78 @@ class Box:
                     with open("/app/results/tip_coordinates/" + f"/{self._qr_number}_{count}" + ".csv", 'w') as myfile:
                         wr = csv.writer(myfile, quoting=csv.QUOTE_ALL)
                         wr.writerow(coords)
-                        #do some other saving stuff
-                    
+
+    def denoise_all(self):
+        """
+        Denoise all images using parallel processing.
+        This is a resource-intensive operation, so we load images in batches.
+        """
+        start = time.time()
+        batch_size = 10  # Adjust based on available memory
+        total_images = self.get_total_images()
+        
+        for start_idx in range(0, total_images, batch_size):
+            end_idx = min(start_idx + batch_size, total_images)
+            batch = self.get_images(start_idx, end_idx)
+            
+            with concurrent.futures.ProcessPoolExecutor() as executor:
+                denoised_batch = list(executor.map(retnet.TipModel.denoise, batch))
+            
+            # Update cache with denoised images
+            for i, img in enumerate(denoised_batch):
+                self._image_cache[start_idx + i] = img
+        
+        print("Denoising time:", time.time() - start)
+
+    def to_dict(self):
+        """
+        Convert box to dictionary for serialization.
+        
+        Returns
+        -------
+        dict
+            Dictionary representation of the box
+        """
+        seeds = [i.to_dict() for i in self.seeds]
+        return {
+            "path": self._path,
+            "qr_number": self._qr_number,
+            "save_path": self._save_path,
+            "seeds": seeds
+        }
+
+    @classmethod
+    def from_dict(cls, dct: dict):
+        """
+        Create box from dictionary.
+        
+        Parameters
+        ----------
+        dct : dict
+            Dictionary representation of the box
+            
+        Returns
+        -------
+        Box
+            Box object
+        """
+        box = cls(dct.get("path"), dct.get("save_path"))
+        seeds = dct.get("seeds")
+        final_seeds = []
+        
+        # Load just the first image for seed initialization
+        first_image = box.get_first_image()
+        
+        for seed_dct in seeds:
+            seed = Seed.from_dict(seed_dct, first_image)
+            final_seeds.append(seed)
+        box.seeds = final_seeds
+        return box
 
 class Seed(Image):
-
+    """
+    Class representing a seed and its tracking data.
+    """
 
     def __init__(self, mi: Image, qr_number, seed_number):
         super().__init__(mi.image, mi.crop, mi.x1, mi.x2, mi.y1, mi.y2)
@@ -387,7 +509,6 @@ class Seed(Image):
         self.curling_start_frame = None
 
         # keep these and store in database to recreate this Seed object
-
         self.final_x1 = mi.x1
         self.final_x2 = mi.x2
         self.final_y1 = mi.y1
@@ -405,7 +526,26 @@ class Seed(Image):
         else:
             raise ValueError("Set germination frame to int above 0")
 
-    def germination_detection(self, images, seed_number,  save_path : str, threshold_multiplier : float = 1.5, save_tip_sample: bool = False, automatic : bool = True):
+    def germination_detection(self, box, seed_number, save_path: str, threshold_multiplier: float = 1.5, 
+                             save_tip_sample: bool = False, automatic: bool = True):
+        """
+        Detect germination frame and position for this seed.
+        
+        Parameters
+        ----------
+        box : Box
+            The box containing this seed
+        seed_number : int
+            Number of the seed
+        save_path : str
+            Path to save results
+        threshold_multiplier : float
+            Multiplier for thresholding
+        save_tip_sample : bool
+            Whether to save tip samples
+        automatic : bool
+            Whether to use automatic detection
+        """
         if automatic:
             pass
             # NEED TO DEVELOP THIS. WAS NOT RELIABLE, AND WON'T RUN AS CURRENTLY WRITTEN.
@@ -422,10 +562,12 @@ class Seed(Image):
         else:
             print("Finding germination frame for seed " + str(seed_number))
             first = 0
-            last = len(images) - 1
+            last = box.get_total_images() - 1
             while True:
                 mid = int((first + last)/2)
-                plt.imshow(images[mid][self.y1:self.y2, self.x1:self.x2])
+                # Load just the image we need for this step
+                image = box.get_image(mid)
+                plt.imshow(image[self.y1:self.y2, self.x1:self.x2])
                 plt.show()
                 while True:
                     direction = input("Is germination (b)efore, (a)fter, (h)ere, do you need to (r)estart, or does it not germinate (x)?")
@@ -445,22 +587,23 @@ class Seed(Image):
                         break
                 elif direction == "r":
                     first = 0
-                    last = len(images) - 1
+                    last = box.get_total_images() - 1
                 elif direction == "a":
                     first = mid
                 elif direction == "b":
                     last = mid
                 
             if self.germination_indicator:                    
-                proposed = np.copy(images[self._tracking_start_frame][self.y1:self.y2, self.x1:self.x2])
-                threshold_light = pcv.threshold.binary(gray_img=proposed, threshold=np.median(images[mid])*threshold_multiplier , max_value=255, object_type='light')
+                # Get the image at the germination frame
+                germination_image = box.get_image(self._tracking_start_frame)
+                proposed = np.copy(germination_image[self.y1:self.y2, self.x1:self.x2])
+                threshold_light = pcv.threshold.binary(gray_img=proposed, threshold=np.median(germination_image)*threshold_multiplier, max_value=255, object_type='light')
                 binary_img = pcv.median_blur(gray_img=threshold_light, ksize=5)
                 fill_image = pcv.fill(bin_img=binary_img, size=10)
                 skeleton = pcv.morphology.skeletonize(mask=fill_image)
                 tips_img = pcv.morphology.find_tips(skel_img=skeleton, mask=fill_image)
                 locs = np.argwhere(tips_img > 0)
                              
-                
                 i = len(locs) - 1
                 while i < len(locs):
                     copy = np.copy(proposed)
@@ -496,24 +639,28 @@ class Seed(Image):
                 
                               
                           
-    def tip_trace_pcv(self, images_param, length : int = None, tot_length : int = None, threshold_multiplier : float = 1.5, bound_radius : int = 30):
+    def tip_trace_pcv(self, box, length: int = None, tot_length: int = None, 
+                     threshold_multiplier: float = 1.5, bound_radius: int = 30):
         """
         Method to start tracking the root tip from the identified point of germination saved in each seed object.
-        """
         
-       
-        # preprocess is a tuple of parameters in a specific order ex. ("blur", "canny", "resize")
-        # images = images_param.copy() # IMPORTANT BUG FIX, pass by reference, aka lists are mutable
-        images = images_param
+        Parameters
+        ----------
+        box : Box
+            The box containing this seed
+        length : int
+            Number of frames to trace
+        tot_length : int
+            Total number of frames available
+        threshold_multiplier : float
+            Multiplier for thresholding
+        bound_radius : int
+            Radius for bounding box
+        """
         if length > tot_length - self.germination_frame:
             print("Requested length is longer than there is data for this seed. Will track as many frames as possible.")
             length = tot_length - self.germination_frame
             
-        #coords = self.get_transform_crop_coords(x1=self.germination_x, y1=self.germination_y)
-        #self.transform_crop_coords(self.germination_x - bound_radius, self.germination_x + bound_radius, self.germination_y - bound_radius, self.germination_y + bound_radius)
-#         self.transform_crop_coords(-bound_radius, +bound_radius,-bound_radius, +bound_radius)
-#         self.germination_x = int((coords.x1 + coords.x2)/2)
-#         self.germination_y = int((coords.y1 + coords.y2)/2)
         self.x1 = self.germination_x - bound_radius
         self.x2 = self.germination_x + bound_radius
         self.y1 = self.germination_y - bound_radius
@@ -524,57 +671,50 @@ class Seed(Image):
         last_x = bound_radius
         last_y = bound_radius
         try:
-            count = 0
-            for image in images[self._tracking_start_frame:(self._tracking_start_frame + length)]:
+            # Process frames sequentially, loading each as needed
+            for frame_idx in range(self._tracking_start_frame, self._tracking_start_frame + length):
+                # Load just the current frame
+                image = box.get_image(frame_idx)
                 image = image[self.y1:self.y2, self.x1:self.x2]
 
-                threshold_light = pcv.threshold.binary(gray_img=image, threshold=np.median(image)*threshold_multiplier, max_value=255, object_type='light') #try mean?
+                threshold_light = pcv.threshold.binary(gray_img=image, threshold=np.median(image)*threshold_multiplier, max_value=255, object_type='light')
                 binary_img = pcv.median_blur(gray_img=threshold_light, ksize=5)
                 fill_image = pcv.fill(bin_img=binary_img, size=10)
                 skeleton = pcv.morphology.skeletonize(mask=fill_image)
                 tips_img = pcv.morphology.find_tips(skel_img=skeleton, mask=fill_image)
-                #tips_img = tips_img[20:-20, 20:-20]
                 locs = np.argwhere(tips_img > 0)
                 
-                #Here we take the index of the identified end-points and use np.linalg.norm to find the identified endpoint closest to the last identified tip.
-                #This solves a problem when roots grow somewhat horizontally and the old way of just choosing the bottom-most endpoint would fail because sometimes the 
-                #root starts to grow transiently upward as it circumnutates, which puts the actual tip above the endpoint found where the shootward section of the ro
+                # Find the tip closest to the previous location
                 x = locs[np.argmin([np.linalg.norm([last_y, last_x] - l) for l in locs])][1]
                 y = locs[np.argmin([np.linalg.norm([last_y, last_x] - l) for l in locs])][0]
                 
-                #old algorithm which fails when the root circumnutates while growing mostly horizontal
-#                 x = locs[np.argmax(locs, axis =0)[0]][1]
-#                 y = locs[np.argmax(locs, axis =0)[0]][0]
-                
-
-                #self.transform_crop_coords(x, x, y, y)
                 self.transform_crop_coords(x - bound_radius, x + bound_radius, y - bound_radius, y + bound_radius)
                 tip_coords.append([int((self.x2 + self.x1)/2), int((self.y2 + self.y1)/2)])
                 last_x = x
                 last_y = y
-                count = count + 1
-        except Exception as e: print(e)
+        except Exception as e: 
+            print(e)
             
-        
-        #print(tip_coords)
         self.tip_coords_pcv = tip_coords
         
     def make_video(self, images, path: str, trace_tip: bool = True):
-
-        # pass by value immutable types, pass by reference mutable types
-        # images list is mutable and passed by reference so there is a need to copy the list in order to avoid overwriting
-
-        # convert to numpy object, this will keep self.images integrity
-        #frames = np.array(images)
+        """
+        Create a video of the seed germination and root growth.
+        
+        Parameters
+        ----------
+        images : List[np.ndarray]
+            List of images to use for the video
+        path : str
+            Path to save the video
+        trace_tip : bool
+            Whether to trace the tip in the video
+        """
+        # Make a copy of the images to avoid modifying the originals
         frames = images.copy()
-        
         final_frames = []
-
-        frames = frames[(self._tracking_start_frame):(len(self.tip_coords_pcv) + self._tracking_start_frame - 1)]
         
-        #print(len(frames))
-        
-        #This if statement should be before inner for loop below where cv2 places lines on images
+        # This if statement should be before inner for loop below where cv2 places lines on images
         if trace_tip:
             self.tip_coords_pcv = np.asarray(self.tip_coords_pcv)
             x_tip_coords = self.tip_coords_pcv[0:,0]
@@ -596,15 +736,12 @@ class Seed(Image):
                 y2 = 0
 
             for x in range(len(frames)):
-
                 frame = frames[x]
-                #ret,frame = cv2.threshold(frame,np.median(frame),255,cv2.THRESH_TOZERO)
                 original = np.copy(frame)
                 black = np.zeros_like(frame)
-                #frame = Pillow.fromarray(frame, "RGB")
-                # redraw lines in each frame, since base image is different
+                
+                # Redraw lines in each frame, since base image is different
                 for y in range(0, x):
-                    #print(x)
                     if self.tip_coords_pcv[y][0] != 10000:
                         cv2.line(frame, (self.tip_coords_pcv[y][0], self.tip_coords_pcv[y][1]),
                                  (self.tip_coords_pcv[y + 1][0], self.tip_coords_pcv[y + 1][1]),
@@ -614,7 +751,7 @@ class Seed(Image):
                                  (self.tip_coords_pcv[y + 1][0], self.tip_coords_pcv[y + 1][1]),
                                  (255, 0, 0), 3)
                         
-                # crop image based on boundaries
+                # Crop image based on boundaries
                 original = original[y1:y2, x1:x2]
                 frame = frame[y1:y2, x1:x2]
                 black = black[y1:y2, x1:x2]
@@ -629,43 +766,32 @@ class Seed(Image):
                 complete = np.concatenate((original, buffer, frame, buffer, black), axis=1)
                 
                 final_frames.append(complete)
-                #print(len(final_frames))
-                #print(len(frames))
 
             print("___FRAME SIZE___", "x1", x1, "y1", y1, "x2", x2, "y2", y2)
             print("___PATH___", path)
         
-        #save final frame for QC
+        # Save final frame for QC
         self.final_trace_img = final_frames[-1]
         
-        # print(np.shape(final_frames[0]))
         io.make_video_cv2(final_frames, path)
 
-
-
-
-    def max_intensity_projection(self):
-        pass
-
-    def quantify_max_intensity_projection(self):
-        pass
-
     def to_dict(self):
+        """
+        Convert seed to dictionary for serialization.
+        
+        Returns
+        -------
+        dict
+            Dictionary representation of the seed
+        """
         tip_coords = self.tip_coords
         if isinstance(tip_coords, np.ndarray):
             tip_coords = tip_coords.tolist()
-        # print(type(tip_coords), type(tip_coords[0]), type(tip_coords[0][0]))
-        print(type(tip_coords))
-        if tip_coords:
-            print(type(tip_coords))
-            # print(tip_coords)
-            print(type(tip_coords[0]))
-            print(type(tip_coords[0][0]))
-        print(type(self._tracking_start_frame), type(self.germination_x), type(self.germination_y), type(self.qr_number), type(self.seed_number))
+            
         tip_coords = [self.array_to_dict(i) for i in tip_coords]
 
         return {
-            "germination_frame":self._tracking_start_frame,
+            "germination_frame": self._tracking_start_frame,
             "germination_x": int(self.germination_x),
             "germination_y": int(self.germination_y),
             "tip_coords": tip_coords,
@@ -682,23 +808,36 @@ class Seed(Image):
         return {"coord": arr}
 
     @staticmethod
-    def dict_to_array(dct:dict):
+    def dict_to_array(dct: dict):
         return dct.get("coord")
 
     @classmethod
     def from_dict(cls, dct: dict, image):
+        """
+        Create seed from dictionary.
+        
+        Parameters
+        ----------
+        dct : dict
+            Dictionary representation of the seed
+        image : np.ndarray
+            First image for initialization
+            
+        Returns
+        -------
+        Seed
+            Seed object
+        """
         mi = Image(image)
         mi.set_crop(dct.get("x1"), dct.get("x2"), dct.get("y1"), dct.get("y2"))
         seed = cls(mi, dct.get("qr_number"), dct.get("seed_number"))
-        seed._germination_frame = dct.get("germination_frame")
+        seed._tracking_start_frame = dct.get("germination_frame")
         seed.germination_x = dct.get("germination_x")
         seed.germination_y = dct.get("germination_y")
 
-        # convert array[map(array[])] back to array[array[]]
+        # Convert array[map(array[])] back to array[array[]]
         tip_coords_arr = dct.get("tip_coords")
         tip_coords = [cls.dict_to_array(i) for i in tip_coords_arr]
         seed.tip_coords = tip_coords
 
         return seed
-
-
