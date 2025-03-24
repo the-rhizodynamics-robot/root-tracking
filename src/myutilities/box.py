@@ -212,6 +212,7 @@ class Box:
     #seed.tip_trace_pcv(b.images, length = 250)
     def tip_trace_pcv(self, length : int = None, threshold_multiplier : float = 1.5, bound_radius : int = 30):
         count = 1
+        os.makedirs("/app/results/stabilized_videos_single_seed", exist_ok=True)
         for seed in self.seeds:
             if seed.germination_indicator:
                 seed.tip_trace_pcv(self.images, length = length, tot_length = len(self.images), threshold_multiplier = threshold_multiplier, bound_radius = bound_radius)
