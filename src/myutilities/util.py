@@ -126,16 +126,3 @@ def unspool_video(full_path : str, out_dir : str, remove : bool = False):
     if (remove):
         os.remove(full_path)
       
-def empty_trash():
-    """
-    When you delete files from Jupyter lab they are put into a trash directory. This will clear that directory.
-    """
-    
-    response = check_input("Would you like to empty the trash? (y) or (n)", range_ = ("y","n"))
-    if response == "y":
-        response = check_input("Are you sure? (y) or (n)", range_ = ("y","n"))
-        if response == "y":
-                command = "rm -rf $HOME/.local/share/Trash/files"
-                subprocess.call(command,shell=True)
-        else:
-            print("Not emptying trash.")

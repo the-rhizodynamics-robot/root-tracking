@@ -465,7 +465,12 @@ class Seed(Image):
                 i = len(locs) - 1
                 while i < len(locs):
                     copy = np.copy(proposed)
-                    copy[(locs[i][0]-3):(locs[i][0]+3), (locs[i][1]-3):(locs[i][1]+3)] = 0
+                    #copy[(locs[i][0]-3):(locs[i][0]+3), (locs[i][1]-3):(locs[i][1]+3)] = 0
+                    # Create a 10x10 hollow white box (outer perimeter)
+                    copy[(locs[i][0]-5):(locs[i][0]+6), (locs[i][1]-5)] = 255  # Left vertical line
+                    copy[(locs[i][0]-5):(locs[i][0]+6), (locs[i][1]+5)] = 255  # Right vertical line
+                    copy[(locs[i][0]-5), (locs[i][1]-5):(locs[i][1]+6)] = 255  # Top horizontal line
+                    copy[(locs[i][0]+5), (locs[i][1]-5):(locs[i][1]+6)] = 255  # Bottom horizontal line
                     plt.imshow(copy)
                     plt.show()
                     while True:
