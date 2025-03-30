@@ -15,18 +15,14 @@ def listdir_nohidden(path):
     """
     return [f for f in sorted(os.listdir(path)) if not f.startswith('.')]
 
-def archive(source : str):
+def archive():
     """Function to clear out pre_quantification_stabilized directory and move experiment folders to pre_quantificaiton archive. Need to build in a way to clear
     archive because disk will rapidly fill up. Maybe check about removing existing directories when running this function?
-    
-    Parameters
-    ----------
-    source : str
-        source directory to archive within pre_quantification. Usually "stabilized" or "unstabilized"
     """
     
     in_path = "/app/data/"
     out_path = "/app/results/archive/"
+    os.makedirs(out_path, exist_ok=True) s
     old_expts = listdir_nohidden(out_path)
     new_expts = listdir_nohidden(in_path)
     
@@ -55,8 +51,7 @@ def archive(source : str):
 def check_input(prompt, type_=None, min_=None, max_=None, range_=None):
     """
     Function to check user input
-    Function modified from https://stackoverflow.com/questions/23294658/asking-the-user-for-input-until-they-give-a-valid-response
-    
+
     Parameters
     ----------
     prompt: str
