@@ -8,7 +8,7 @@ import argparse
 parser = argparse.ArgumentParser(description='Run JupyterLab with specified data and results directories.')
 parser.add_argument('--data_dir', type=str, required=True, help='Path to image data directory')
 parser.add_argument('--results_dir', type=str, required=True, help='Path to save results directory')
-parser.add_argument('--container', type=str, default='singularity', choices=['docker', 'singularity'], 
+parser.add_argument('--container', type=str, default='docker', choices=['docker', 'singularity'], 
                     help='Container runtime to use (docker or singularity)')
 args = parser.parse_args()
 
@@ -41,10 +41,9 @@ if container_type == "docker":
         "-v", f"{os.path.abspath(results_dir)}:/app/results",
         "-e", f"DATA_DIR={os.path.abspath(data_dir)}",
         "-e", f"RESULTS_DIR={os.path.abspath(results_dir)}",
-        image_name,
-        "jupyter", "lab", "--ip=0.0.0.0", "--port=8888", "--no-browser", "--allow-root"
+        image_name  
     ]
-    
+
 elif container_type == "singularity":
     # Pull the latest image from GitHub Container Registry
     print("Pulling latest Singularity image...")
