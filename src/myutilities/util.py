@@ -22,7 +22,7 @@ def archive():
     
     in_path = "/app/data/"
     out_path = "/app/results/archive/"
-    os.makedirs(out_path, exist_ok=True) s
+    os.makedirs(out_path, exist_ok=True)
     old_expts = listdir_nohidden(out_path)
     new_expts = listdir_nohidden(in_path)
     
