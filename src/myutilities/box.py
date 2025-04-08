@@ -145,12 +145,12 @@ class Box:
         plt.imshow(disp)
         plt.show()
         
-#         while True:
-#             num_seeds = input("How many seeds are in this box?")
-#             if num_seeds.isdigit():
-#                 break
-#             else:
-#                 print("non-numeric entry")
+        while True:
+            num_seeds = input("How many seeds are in this box?")
+            if num_seeds.isdigit():
+                break
+            else:
+                print("non-numeric entry")
         
         for s in range(int(num_seeds)):
             while True:

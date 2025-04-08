@@ -14,5 +14,5 @@ ENV PYTHONPATH="/app/src/"
 # Expose JupyterLab port
 EXPOSE 8888
 
-# Start JupyterLabs
+# Start JupyterLab
 CMD ["jupyter", "lab", "--ip=0.0.0.0", "--port=8888", "--no-browser", "--allow-root"]
