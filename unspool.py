@@ -67,6 +67,6 @@ elif container_type == "singularity":
         "--output_path", "/app/output"
     ]
 
-print(f"Running unspool_stabilize_core.py with input from {input_dir} and output to {output_dir}")
+print(f"Running unspool_core.py with input from {input_dir} and output to {output_dir}")
 subprocess.run(cmd)
 print("Unspooling process completed.")
