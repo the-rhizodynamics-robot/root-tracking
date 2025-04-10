@@ -4,7 +4,7 @@ import sys
 import argparse
 
 # Set up argument parser
-parser = argparse.ArgumentParser(description='Run unspool_stabilize_core.py with specified input and output directories.')
+parser = argparse.ArgumentParser(description='Run unspool_core.py with specified input and output directories.')
 parser.add_argument('--input_dir', type=str, required=True, help='Path to input video directory')
 parser.add_argument('--output_dir', type=str, required=True, help='Path to output directory for unspooled images')
 parser.add_argument('--container', type=str, default='docker', choices=['docker', 'singularity'], 
@@ -38,7 +38,7 @@ if container_type == "docker":
         "-v", f"{os.path.abspath(input_dir)}:/app/input",
         "-v", f"{os.path.abspath(output_dir)}:/app/output",
         image_name,
-        "python", "/app/code/unspool_stabilize_core.py",
+        "python", "/app/code/unspool_core.py",
         "--input_path", "/app/input",
         "--output_path", "/app/output"
     ]
@@ -62,7 +62,7 @@ elif container_type == "singularity":
         "--bind", f"{os.path.abspath(input_dir)}:/app/input",
         "--bind", f"{os.path.abspath(output_dir)}:/app/output",
         singularity_file,
-        "python", "/app/code/unspool_stabilize_core.py",
+        "python", "/app/code/unspool_core.py",
         "--input_path", "/app/input",
         "--output_path", "/app/output"
     ]
