@@ -1,9 +1,12 @@
 # Root Tracking Project Guidelines
 
 ## Commands
-- Run Jupyter: `docker run -it --rm -p 8888:8888 jupyterlab`
-- Run tracking: `python tracking_runner.py`
-- Start interactive notebook: `jupyter notebook notebooks/track.ipynb`
+- Unspool videos → image series: `python3 unspool.py --input_dir <videos> --output_dir <out>`
+- Run tracking (starts JupyterLab in Docker): `python3 tracking.py --data_dir <image_series_parent> --results_dir <results>`
+- The tracking notebook lives at `code/track.ipynb` (open it from the JupyterLab URL printed in the terminal).
+- Both runners pull `ghcr.io/the-rhizodynamics-robot/root-tracking-env:latest` and `docker run` it.
+- Rebuild the image: it's built from `Dockerfile` by `.github/workflows/docker-publish.yml`, which
+  only triggers on `Dockerfile`/workflow changes — so bump the `Dockerfile` when you change `code/`/`src/`.
 
 ## Code Style
 - **Imports**: Standard library → Third-party → Local (relative paths)
@@ -15,7 +18,7 @@
 - **Architecture**: Keep utilities in src/myutilities, domain logic separate
 
 ## Project Structure
-- notebooks/: Interactive experiments and workflows
+- code/: the tracking notebook (`track.ipynb`) + `unspool_core.py` (baked into the image)
 - src/: Core functionality and utilities
 - src/myutilities/: Helper functions for common operations
 - src/retnet/: Neural network components

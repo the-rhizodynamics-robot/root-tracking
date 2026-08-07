@@ -46,11 +46,14 @@ def seed_localization_and_tip_tracking(
         if track == "y":
             box_path = os.path.join(data_path, expt)
             b = box.Box(box_path)
-            b.init_seeds(seed_model_obj, automatic=automatic)
+            b.init_seeds(seed_model_obj, automatic=automatic)   # auto seed bounding boxes (honors `automatic`)
+            # Germination detection is ALWAYS manual: the automatic path in
+            # Seed.germination_detection() is an unfinished stub that returns without
+            # setting a germination frame, which silently skips tip tracing + saving.
             b.germination_detection(
                 save_tip_sample=save_tip_sample,
                 threshold_multiplier=germination_threshold_multiplier,
-                automatic=automatic
+                automatic=False
             )
             b.tip_trace_pcv(
                 length=tip_trace_length,

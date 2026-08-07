@@ -1,5 +1,7 @@
 FROM ghcr.io/the-rhizodynamics-robot/file-sorting-env:latest
 
+# rebuild trigger 2026-08-07: manual-germination default (src/env_setup/track_env_setup.py)
+
 # Install JupyterLabs
 RUN pip install --no-cache-dir jupyterlab
 
