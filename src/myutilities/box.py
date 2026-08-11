@@ -512,7 +512,8 @@ class Seed(Image):
                 
                               
                           
-    def register_to_seed(self, images, bottom_trim : int = 100, search_margin : int = 60):
+    def register_to_seed(self, images, bottom_trim : int = 100, search_margin : int = 60,
+                         min_score : float = 0.5, max_weak_frac : float = 0.25):
         """
         Measure this seed's per-frame (dx, dy) shift relative to frame 0 by template-matching
         on the seed body, so tracking and video can undo residual gantry jitter locally.
@@ -532,6 +533,11 @@ class Seed(Image):
             pixels removed from the bottom of the seed box to exclude the root-growth region
         search_margin : int
             how far (px) around the seed box to search; must exceed the worst expected jitter
+        min_score : float
+            reject a frame's match below this TM_CCOEFF_NORMED score and hold the last good shift
+        max_weak_frac : float
+            if more than this fraction of frames are rejected, drop the offsets entirely and track
+            unstabilized -- a wrong offset is worse than no offset
         """
         h, w = images[0].shape
         tx1, tx2 = max(self.final_x1, 0), min(self.final_x2, w)
@@ -542,16 +548,26 @@ class Seed(Image):
         sx2, sy2 = min(tx2 + search_margin, w), min(ty2 + search_margin, h)
 
         self.offsets = []
+        lx, ly, weak = 0, 0, 0 # last ACCEPTED shift; frame 0 is the reference so it starts at zero
         for img in images:
             res = cv2.matchTemplate(img[sy1:sy2, sx1:sx2], template, cv2.TM_CCOEFF_NORMED)
             _, score, _, loc = cv2.minMaxLoc(res)
-            self.offsets.append((sx1 + loc[0] - tx1, sy1 + loc[1] - ty1, score)) # shift vs frame 0
+            ox, oy = sx1 + loc[0] - tx1, sy1 + loc[1] - ty1 # shift vs frame 0
+            edge = abs(ox) >= search_margin or abs(oy) >= search_margin # ran into the search boundary: not a measurement, the true shift could be anything beyond it
+            if score < min_score or edge:
+                weak += 1; ox, oy = lx, ly # hold the last good shift; a wrong offset is far worse than none, since tip_trace_pcv crops only bound_radius*2 px around the tip
+            else:
+                lx, ly = ox, oy
+            self.offsets.append((ox, oy, score))
 
         dx = [o[0] for o in self.offsets]; dy = [o[1] for o in self.offsets]
         worst = min(o[2] for o in self.offsets)
         print(f"seed {self.seed_number}: jitter dx {min(dx)}..{max(dx)} px, dy {min(dy)}..{max(dy)} px "
-              f"(template {tx2-tx1}x{ty2-ty1}, worst match {worst:.2f})")
-        if worst < 0.5: print("  WARNING: weak template match on some frames -- offsets may be unreliable.")
+              f"(template {tx2-tx1}x{ty2-ty1}, worst match {worst:.2f}, {weak}/{len(images)} frames rejected)")
+        if weak > len(images) * max_weak_frac: # registration is unreliable for this seed; unstabilized beats mis-stabilized
+            print(f"  seed {self.seed_number}: registration FAILED ({weak}/{len(images)} frames) -- stabilization DISABLED for this seed.")
+            print(f"  (if the printed range reaches +/-{search_margin}, the real jitter exceeds the search window: raise stabilize_search_margin)")
+            self.offsets = None
 
     def _offset(self, frame_index : int):
         """(dx, dy) of `frame_index` vs frame 0; (0, 0) when the seed was never registered."""
