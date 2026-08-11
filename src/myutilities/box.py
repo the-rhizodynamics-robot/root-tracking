@@ -575,6 +575,14 @@ class Seed(Image):
             self.offsets.append((ox, oy, score))
         if widest > search_margin: print(f"  seed {self.seed_number}: widened search to +/-{widest} px to find the seed")
 
+        # Re-reference to the MEDIAN position, not frame 0. Frame 0 is the first imaging cycle,
+        # which the firmware treats differently (longer light warm-up, first calibration) and which
+        # measures ~100px off the rest -- leaving it as the zero point displaces every other frame
+        # and puts a visible jump at the start of the video. Offsets are relative, so shifting the
+        # baseline is consistent everywhere they are used.
+        mx = int(np.median([o[0] for o in self.offsets])); my = int(np.median([o[1] for o in self.offsets]))
+        self.offsets = [(o[0] - mx, o[1] - my, o[2]) for o in self.offsets]
+
         dx = [o[0] for o in self.offsets]; dy = [o[1] for o in self.offsets]
         worst = min(o[2] for o in self.offsets)
         print(f"seed {self.seed_number}: jitter dx {min(dx)}..{max(dx)} px, dy {min(dy)}..{max(dy)} px "
