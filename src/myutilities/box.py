@@ -512,8 +512,9 @@ class Seed(Image):
                 
                               
                           
-    def register_to_seed(self, images, bottom_trim : int = 100, search_margin : int = 60,
-                         min_score : float = 0.5, max_weak_frac : float = 0.25):
+    def register_to_seed(self, images, bottom_trim : int = 100, search_margin : int = 200,
+                         min_score : float = 0.5, max_weak_frac : float = 0.25,
+                         max_search_margin : int = 900):
         """
         Measure this seed's per-frame (dx, dy) shift relative to frame 0 by template-matching
         on the seed body, so tracking and video can undo residual gantry jitter locally.
@@ -532,7 +533,9 @@ class Seed(Image):
         bottom_trim : int
             pixels removed from the bottom of the seed box to exclude the root-growth region
         search_margin : int
-            how far (px) around the seed box to search; must exceed the worst expected jitter
+            how far (px) around the seed box to search first; widened automatically (up to
+            max_search_margin) whenever the best match lands on the boundary, since a boundary
+            hit means the true shift is somewhere past it
         min_score : float
             reject a frame's match below this TM_CCOEFF_NORMED score and hold the last good shift
         max_weak_frac : float
@@ -547,18 +550,30 @@ class Seed(Image):
         sx1, sy1 = max(tx1 - search_margin, 0), max(ty1 - search_margin, 0) # search window, fixed
         sx2, sy2 = min(tx2 + search_margin, w), min(ty2 + search_margin, h)
 
-        self.offsets = []
-        lx, ly, weak = 0, 0, 0 # last ACCEPTED shift; frame 0 is the reference so it starts at zero
-        for img in images:
-            res = cv2.matchTemplate(img[sy1:sy2, sx1:sx2], template, cv2.TM_CCOEFF_NORMED)
+        def match(img, margin): # best (dx, dy, score) within +/-margin of the frame-0 box
+            ax1, ay1 = max(tx1 - margin, 0), max(ty1 - margin, 0)
+            ax2, ay2 = min(tx2 + margin, w), min(ty2 + margin, h)
+            res = cv2.matchTemplate(img[ay1:ay2, ax1:ax2], template, cv2.TM_CCOEFF_NORMED)
             _, score, _, loc = cv2.minMaxLoc(res)
-            ox, oy = sx1 + loc[0] - tx1, sy1 + loc[1] - ty1 # shift vs frame 0
-            edge = abs(ox) >= search_margin or abs(oy) >= search_margin # ran into the search boundary: not a measurement, the true shift could be anything beyond it
-            if score < min_score or edge:
+            return ax1 + loc[0] - tx1, ay1 + loc[1] - ty1, score
+
+        self.offsets = []
+        lx, ly, weak, widest = 0, 0, 0, search_margin # last ACCEPTED shift; frame 0 is the reference so it starts at zero
+        for img in images:
+            margin = search_margin
+            while True:
+                ox, oy, score = match(img, margin)
+                # A result sitting ON the boundary is not a measurement -- the true shift may be
+                # anywhere past it -- so widen and look again rather than believing the edge.
+                if max(abs(ox), abs(oy)) < margin or margin >= max_search_margin: break
+                margin = min(margin * 3, max_search_margin)
+            widest = max(widest, margin)
+            if score < min_score or max(abs(ox), abs(oy)) >= margin:
                 weak += 1; ox, oy = lx, ly # hold the last good shift; a wrong offset is far worse than none, since tip_trace_pcv crops only bound_radius*2 px around the tip
             else:
                 lx, ly = ox, oy
             self.offsets.append((ox, oy, score))
+        if widest > search_margin: print(f"  seed {self.seed_number}: widened search to +/-{widest} px to find the seed")
 
         dx = [o[0] for o in self.offsets]; dy = [o[1] for o in self.offsets]
         worst = min(o[2] for o in self.offsets)

@@ -21,7 +21,7 @@ def seed_localization_and_tip_tracking(
     automatic=False,
     stabilize=True,
     stabilize_bottom_trim=100,
-    stabilize_search_margin=60
+    stabilize_search_margin=200
 ):
     """
     Function to localize seeds and track root tips with specified parameters.
