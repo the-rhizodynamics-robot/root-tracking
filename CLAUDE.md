@@ -6,7 +6,11 @@
 - The tracking notebook lives at `code/track.ipynb` (open it from the JupyterLab URL printed in the terminal).
 - Both runners pull `ghcr.io/the-rhizodynamics-robot/root-tracking-env:latest` and `docker run` it.
 - Rebuild the image: it's built from `Dockerfile` by `.github/workflows/docker-publish.yml`, which
-  only triggers on `Dockerfile`/workflow changes — so bump the `Dockerfile` when you change `code/`/`src/`.
+  triggers on pushes to `main` touching `Dockerfile`, `src/**`, `code/**`, or the workflow itself.
+  Merging a `src/`/`code/` change is enough — no manual `Dockerfile` bump. To force a rebuild with
+  no file change, run the workflow from the Actions tab (`workflow_dispatch`).
+- Only `main` builds. Feature-branch pushes never touch `:latest`, so test those by `docker cp`-ing
+  changed files into the running container and restarting the Jupyter kernel.
 
 ## Code Style
 - **Imports**: Standard library → Third-party → Local (relative paths)

@@ -4,9 +4,15 @@ on:
   push:
     branches:
       - main 
+    # The image bakes in code/ and src/ (see the COPY lines in Dockerfile), so a
+    # change to either must rebuild it. Without them, merging a code fix left
+    # :latest stale and every tracking.py run silently pulled the old image --
+    # the workaround was remembering to bump a comment in the Dockerfile.
     paths:
-      - 'Dockerfile' 
+      - 'Dockerfile'
       - '.github/workflows/docker-publish.yml'
+      - 'src/**'
+      - 'code/**'
 
   workflow_dispatch:  
 
