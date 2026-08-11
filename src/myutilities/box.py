@@ -11,6 +11,8 @@ import os
 from matplotlib import pyplot as plt
 from src.myutilities.image import Image
 
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"} # everything else in a box folder is not a frame
+
 class Box:
     """The box class defines the data derived from a single magenta box in an experiment.
     
@@ -45,11 +47,15 @@ class Box:
         self._path = path 
         self._qr_number = os.path.basename(os.path.normpath(self._path))
         self._save_path = os.path.normpath(save_path) + f"/{self._qr_number}"
-        my_list = util.listdir_nohidden(self._path)
+        my_list = [f for f in util.listdir_nohidden(self._path)
+                   if os.path.splitext(f)[1].lower() in IMAGE_EXTENSIONS] # cv2 returns None for non-images, which only surfaces much later as a cryptic TypeError deep in tracking
         my_list = [os.path.join(self._path, l) for l in my_list]
         with concurrent.futures.ThreadPoolExecutor() as executor:
             all_images = executor.map(io.read_image_single_channel, my_list)
         self.images = [img for img in all_images] # numpy array of images, grayscale mode
+        bad = [p for p, img in zip(my_list, self.images) if img is None] # a corrupt/truncated frame still gets through the extension filter
+        if bad: raise ValueError(f"{len(bad)} of {len(my_list)} files in {self._path} could not be read as images, e.g. {os.path.basename(bad[0])}")
+        print(f"box {self._qr_number}: loaded {len(self.images)} frames")
         self.seeds = [] # Seed objects
     
         
