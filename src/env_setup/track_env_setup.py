@@ -18,7 +18,10 @@ def seed_localization_and_tip_tracking(
     tip_trace_threshold_multiplier=1.5,
     tip_trace_bound_radius=30,
     save_tip_sample=False,
-    automatic=False
+    automatic=False,
+    stabilize=True,
+    stabilize_bottom_trim=100,
+    stabilize_search_margin=200
 ):
     """
     Function to localize seeds and track root tips with specified parameters.
@@ -31,6 +34,10 @@ def seed_localization_and_tip_tracking(
     - tip_trace_bound_radius (int): Bound radius for tip tracing.
     - save_tip_sample (bool): Whether to save tip samples.
     - automatic (bool): Whether to run in automatic mode.
+    - stabilize (bool): Register each seed to frame 0 to remove residual gantry jitter locally.
+    - stabilize_bottom_trim (int): Px trimmed off the bottom of the seed box (the root-growth region)
+      before it is used as the registration template.
+    - stabilize_search_margin (int): Px searched around the seed box; must exceed the worst jitter.
     """
     box_list = util.listdir_nohidden(data_path)
     print("The following experiments are available for tracking:")
@@ -58,7 +65,10 @@ def seed_localization_and_tip_tracking(
             b.tip_trace_pcv(
                 length=tip_trace_length,
                 threshold_multiplier=tip_trace_threshold_multiplier,
-                bound_radius=tip_trace_bound_radius
+                bound_radius=tip_trace_bound_radius,
+                stabilize=stabilize,
+                stabilize_bottom_trim=stabilize_bottom_trim,
+                stabilize_search_margin=stabilize_search_margin
             )
             b.validate_save_tracking()
             del b

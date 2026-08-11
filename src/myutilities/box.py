@@ -11,6 +11,8 @@ import os
 from matplotlib import pyplot as plt
 from src.myutilities.image import Image
 
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"} # everything else in a box folder is not a frame
+
 class Box:
     """The box class defines the data derived from a single magenta box in an experiment.
     
@@ -45,11 +47,15 @@ class Box:
         self._path = path 
         self._qr_number = os.path.basename(os.path.normpath(self._path))
         self._save_path = os.path.normpath(save_path) + f"/{self._qr_number}"
-        my_list = util.listdir_nohidden(self._path)
+        my_list = [f for f in util.listdir_nohidden(self._path)
+                   if os.path.splitext(f)[1].lower() in IMAGE_EXTENSIONS] # cv2 returns None for non-images, which only surfaces much later as a cryptic TypeError deep in tracking
         my_list = [os.path.join(self._path, l) for l in my_list]
         with concurrent.futures.ThreadPoolExecutor() as executor:
             all_images = executor.map(io.read_image_single_channel, my_list)
         self.images = [img for img in all_images] # numpy array of images, grayscale mode
+        bad = [p for p, img in zip(my_list, self.images) if img is None] # a corrupt/truncated frame still gets through the extension filter
+        if bad: raise ValueError(f"{len(bad)} of {len(my_list)} files in {self._path} could not be read as images, e.g. {os.path.basename(bad[0])}")
+        print(f"box {self._qr_number}: loaded {len(self.images)} frames")
         self.seeds = [] # Seed objects
     
         
@@ -210,11 +216,14 @@ class Box:
 
     #Call to seed tip trace
     #seed.tip_trace_pcv(b.images, length = 250)
-    def tip_trace_pcv(self, length : int = None, threshold_multiplier : float = 1.5, bound_radius : int = 30):
+    def tip_trace_pcv(self, length : int = None, threshold_multiplier : float = 1.5, bound_radius : int = 30,
+                      stabilize : bool = True, stabilize_bottom_trim : int = 100, stabilize_search_margin : int = 200):
         count = 1
         os.makedirs("/app/results/stabilized_videos_single_seed", exist_ok=True)
         for seed in self.seeds:
             if seed.germination_indicator:
+                if stabilize: # local per-seed registration; must run before tracking uses the offsets
+                    seed.register_to_seed(self.images, bottom_trim = stabilize_bottom_trim, search_margin = stabilize_search_margin)
                 seed.tip_trace_pcv(self.images, length = length, tot_length = len(self.images), threshold_multiplier = threshold_multiplier, bound_radius = bound_radius)
                 seed.make_video(self.images,  "/app/results/stabilized_videos_single_seed" + f"/{self._qr_number}_{count}.mp4", trace_tip=True)
             count = count + 1
@@ -386,6 +395,7 @@ class Seed(Image):
         self.seed_number = seed_number
         self.final_trace_img = None
         self.curling_start_frame = None
+        self.offsets = None # per-frame (dx, dy, score) from register_to_seed(); None = unregistered
 
         # keep these and store in database to recreate this Seed object
 
@@ -502,6 +512,83 @@ class Seed(Image):
                 
                               
                           
+    def register_to_seed(self, images, bottom_trim : int = 100, search_margin : int = 200,
+                         min_score : float = 0.5, max_weak_frac : float = 0.25,
+                         max_search_margin : int = 900):
+        """
+        Measure this seed's per-frame (dx, dy) shift relative to frame 0 by template-matching
+        on the seed body, so tracking and video can undo residual gantry jitter locally.
+
+        Upstream file-sorting stabilizes the WHOLE frame with one transform, which leaves
+        residual error that grows toward the frame edges and differs per seed. The seed itself
+        never moves, so it is the ideal local reference. The bottom of the seed box is trimmed
+        off because that is where the root grows into (init_seeds pads y2 by +100); including it
+        would let the template change over time and drift. Always matched against frame 0, so
+        error cannot accumulate.
+
+        Parameters
+        ----------
+        images : list
+            the box's full image series
+        bottom_trim : int
+            pixels removed from the bottom of the seed box to exclude the root-growth region
+        search_margin : int
+            how far (px) around the seed box to search first; widened automatically (up to
+            max_search_margin) whenever the best match lands on the boundary, since a boundary
+            hit means the true shift is somewhere past it
+        min_score : float
+            reject a frame's match below this TM_CCOEFF_NORMED score and hold the last good shift
+        max_weak_frac : float
+            if more than this fraction of frames are rejected, drop the offsets entirely and track
+            unstabilized -- a wrong offset is worse than no offset
+        """
+        h, w = images[0].shape
+        tx1, tx2 = max(self.final_x1, 0), min(self.final_x2, w)
+        ty1, ty2 = max(self.final_y1, 0), min(self.final_y2, h) - bottom_trim
+        if ty2 - ty1 < 20: ty2 = min(self.final_y2, h) # box too short to trim; use it whole
+        template = images[0][ty1:ty2, tx1:tx2]
+        sx1, sy1 = max(tx1 - search_margin, 0), max(ty1 - search_margin, 0) # search window, fixed
+        sx2, sy2 = min(tx2 + search_margin, w), min(ty2 + search_margin, h)
+
+        def match(img, margin): # best (dx, dy, score) within +/-margin of the frame-0 box
+            ax1, ay1 = max(tx1 - margin, 0), max(ty1 - margin, 0)
+            ax2, ay2 = min(tx2 + margin, w), min(ty2 + margin, h)
+            res = cv2.matchTemplate(img[ay1:ay2, ax1:ax2], template, cv2.TM_CCOEFF_NORMED)
+            _, score, _, loc = cv2.minMaxLoc(res)
+            return ax1 + loc[0] - tx1, ay1 + loc[1] - ty1, score
+
+        self.offsets = []
+        lx, ly, weak, widest = 0, 0, 0, search_margin # last ACCEPTED shift; frame 0 is the reference so it starts at zero
+        for img in images:
+            margin = search_margin
+            while True:
+                ox, oy, score = match(img, margin)
+                # A result sitting ON the boundary is not a measurement -- the true shift may be
+                # anywhere past it -- so widen and look again rather than believing the edge.
+                if max(abs(ox), abs(oy)) < margin or margin >= max_search_margin: break
+                margin = min(margin * 3, max_search_margin)
+            widest = max(widest, margin)
+            if score < min_score or max(abs(ox), abs(oy)) >= margin:
+                weak += 1; ox, oy = lx, ly # hold the last good shift; a wrong offset is far worse than none, since tip_trace_pcv crops only bound_radius*2 px around the tip
+            else:
+                lx, ly = ox, oy
+            self.offsets.append((ox, oy, score))
+        if widest > search_margin: print(f"  seed {self.seed_number}: widened search to +/-{widest} px to find the seed")
+
+        dx = [o[0] for o in self.offsets]; dy = [o[1] for o in self.offsets]
+        worst = min(o[2] for o in self.offsets)
+        print(f"seed {self.seed_number}: jitter dx {min(dx)}..{max(dx)} px, dy {min(dy)}..{max(dy)} px "
+              f"(template {tx2-tx1}x{ty2-ty1}, worst match {worst:.2f}, {weak}/{len(images)} frames rejected)")
+        if weak > len(images) * max_weak_frac: # registration is unreliable for this seed; unstabilized beats mis-stabilized
+            print(f"  seed {self.seed_number}: registration FAILED ({weak}/{len(images)} frames) -- stabilization DISABLED for this seed.")
+            print(f"  (if the printed range reaches +/-{search_margin}, the real jitter exceeds the search window: raise stabilize_search_margin)")
+            self.offsets = None
+
+    def _offset(self, frame_index : int):
+        """(dx, dy) of `frame_index` vs frame 0; (0, 0) when the seed was never registered."""
+        if not self.offsets or frame_index >= len(self.offsets): return 0, 0
+        return self.offsets[frame_index][0], self.offsets[frame_index][1]
+
     def tip_trace_pcv(self, images_param, length : int = None, tot_length : int = None, threshold_multiplier : float = 1.5, bound_radius : int = 30):
         """
         Method to start tracking the root tip from the identified point of germination saved in each seed object.
@@ -520,19 +607,23 @@ class Seed(Image):
 #         self.transform_crop_coords(-bound_radius, +bound_radius,-bound_radius, +bound_radius)
 #         self.germination_x = int((coords.x1 + coords.x2)/2)
 #         self.germination_y = int((coords.y1 + coords.y2)/2)
-        self.x1 = self.germination_x - bound_radius
-        self.x2 = self.germination_x + bound_radius
-        self.y1 = self.germination_y - bound_radius
-        self.y2 = self.germination_y + bound_radius
-        
+        gdx, gdy = self._offset(self._tracking_start_frame)
+        gx, gy = self.germination_x - gdx, self.germination_y - gdy # germination point in frame-0 reference
+
+        self.x1 = gx - bound_radius
+        self.x2 = gx + bound_radius
+        self.y1 = gy - bound_radius
+        self.y2 = gy + bound_radius
+
         tip_coords = []
-        tip_coords.append([self.germination_x, self.germination_y])
+        tip_coords.append([gx, gy])
         last_x = bound_radius
         last_y = bound_radius
         try:
             count = 0
-            for image in images[self._tracking_start_frame:(self._tracking_start_frame + length)]:
-                image = image[self.y1:self.y2, self.x1:self.x2]
+            for fi in range(self._tracking_start_frame, self._tracking_start_frame + length):
+                dx, dy = self._offset(fi) # crop follows the jitter; self.x1/y1 stay frame-0 referenced
+                image = images[fi][self.y1 + dy:self.y2 + dy, self.x1 + dx:self.x2 + dx]
 
                 threshold_light = pcv.threshold.binary(gray_img=image, threshold=np.median(image)*threshold_multiplier, max_value=255, object_type='light') #try mean?
                 binary_img = pcv.median_blur(gray_img=threshold_light, ksize=5)
@@ -559,9 +650,10 @@ class Seed(Image):
                 last_x = x
                 last_y = y
                 count = count + 1
-        except Exception as e: print(e)
-            
-        
+        except Exception as e: # was silent: a lost tip truncated the trace with no visible reason
+            print(f"seed {self.seed_number}: tracking STOPPED at frame {self._tracking_start_frame + count} "
+                  f"after {count}/{length} frames -- {e!r}")
+
         #print(tip_coords)
         self.tip_coords_pcv = tip_coords
         
@@ -586,44 +678,47 @@ class Seed(Image):
             x_tip_coords = self.tip_coords_pcv[0:,0]
             y_tip_coords = self.tip_coords_pcv[0:,1]
 
-            # calculate crop boundaries for tip video
-            x1 = min(x_tip_coords) - 50
-            x2 = max(x_tip_coords) + 50
-            y1 = min(y_tip_coords) - 50
-            y2 = max(y_tip_coords) + 50
+            # Crop must cover the SEED as well as the root path. The tip trajectory starts at the
+            # germination point, so a bbox over it alone clips the seed body to a sliver against the
+            # top edge -- worst when the root grows straight down and the bbox is narrow.
+            x1 = min(min(x_tip_coords), self.final_x1) - 50
+            x2 = max(max(x_tip_coords), self.final_x2) + 50
+            y1 = min(min(y_tip_coords), self.final_y1) - 50
+            y2 = max(max(y_tip_coords), self.final_y2) + 50
 
-            if x1 < 0:
-                x1 = 0
-            if x2 < 0:
-                x2 = 0
-            if y1 < 0:
-                y1 = 0
-            if y2 < 0:
-                y2 = 0
+            fh, fw = frames[0].shape
+            x1, y1 = max(int(x1), 0), max(int(y1), 0) # clamp INTO the frame (x2/y2 were clamped to 0, not fw/fh)
+            x2, y2 = min(int(x2), fw), min(int(y2), fh)
+            cw, ch = (x2 - x1) & ~1, (y2 - y1) & ~1 # constant size so every frame matches; even, because mp4v mangles odd dimensions
 
             for x in range(len(frames)):
 
-                frame = frames[x]
+                frame = np.copy(frames[x]) # copy: cv2.line below would otherwise burn the trace into
+                                           # self.images, corrupting later seeds in the same box
                 #ret,frame = cv2.threshold(frame,np.median(frame),255,cv2.THRESH_TOZERO)
                 original = np.copy(frame)
                 black = np.zeros_like(frame)
+                dx, dy = self._offset(self._tracking_start_frame + x)
                 #frame = Pillow.fromarray(frame, "RGB")
                 # redraw lines in each frame, since base image is different
                 for y in range(0, x):
                     #print(x)
                     if self.tip_coords_pcv[y][0] != 10000:
-                        cv2.line(frame, (self.tip_coords_pcv[y][0], self.tip_coords_pcv[y][1]),
-                                 (self.tip_coords_pcv[y + 1][0], self.tip_coords_pcv[y + 1][1]),
+                        # coords are frame-0 referenced; += offset puts them on the root in THIS frame
+                        cv2.line(frame, (self.tip_coords_pcv[y][0] + dx, self.tip_coords_pcv[y][1] + dy),
+                                 (self.tip_coords_pcv[y + 1][0] + dx, self.tip_coords_pcv[y + 1][1] + dy),
                                  (255, 0, 0), 3)
 
-                        cv2.line(black, (self.tip_coords_pcv[y][0], self.tip_coords_pcv[y][1]),
-                                 (self.tip_coords_pcv[y + 1][0], self.tip_coords_pcv[y + 1][1]),
+                        cv2.line(black, (self.tip_coords_pcv[y][0] + dx, self.tip_coords_pcv[y][1] + dy),
+                                 (self.tip_coords_pcv[y + 1][0] + dx, self.tip_coords_pcv[y + 1][1] + dy),
                                  (255, 0, 0), 3)
-                        
-                # crop image based on boundaries
-                original = original[y1:y2, x1:x2]
-                frame = frame[y1:y2, x1:x2]
-                black = black[y1:y2, x1:x2]
+
+                # crop image based on boundaries, shifted by this frame's jitter so the OUTPUT is stabilized
+                cx1 = min(max(int(x1) + dx, 0), max(fw - cw, 0))
+                cy1 = min(max(int(y1) + dy, 0), max(fh - ch, 0))
+                original = original[cy1:cy1 + ch, cx1:cx1 + cw]
+                frame = frame[cy1:cy1 + ch, cx1:cx1 + cw]
+                black = black[cy1:cy1 + ch, cx1:cx1 + cw]
 
                 # cv2_videoWriter BGR color requirement
                 buffer = np.full(np.shape(original), 255, dtype=np.uint8)[:,1:3]
