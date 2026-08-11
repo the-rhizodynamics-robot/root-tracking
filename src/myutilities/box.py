@@ -647,23 +647,18 @@ class Seed(Image):
             x_tip_coords = self.tip_coords_pcv[0:,0]
             y_tip_coords = self.tip_coords_pcv[0:,1]
 
-            # calculate crop boundaries for tip video
-            x1 = min(x_tip_coords) - 50
-            x2 = max(x_tip_coords) + 50
-            y1 = min(y_tip_coords) - 50
-            y2 = max(y_tip_coords) + 50
-
-            if x1 < 0:
-                x1 = 0
-            if x2 < 0:
-                x2 = 0
-            if y1 < 0:
-                y1 = 0
-            if y2 < 0:
-                y2 = 0
+            # Crop must cover the SEED as well as the root path. The tip trajectory starts at the
+            # germination point, so a bbox over it alone clips the seed body to a sliver against the
+            # top edge -- worst when the root grows straight down and the bbox is narrow.
+            x1 = min(min(x_tip_coords), self.final_x1) - 50
+            x2 = max(max(x_tip_coords), self.final_x2) + 50
+            y1 = min(min(y_tip_coords), self.final_y1) - 50
+            y2 = max(max(y_tip_coords), self.final_y2) + 50
 
             fh, fw = frames[0].shape
-            cw, ch = int(x2 - x1), int(y2 - y1) # crop size held constant so every video frame matches
+            x1, y1 = max(int(x1), 0), max(int(y1), 0) # clamp INTO the frame (x2/y2 were clamped to 0, not fw/fh)
+            x2, y2 = min(int(x2), fw), min(int(y2), fh)
+            cw, ch = (x2 - x1) & ~1, (y2 - y1) & ~1 # constant size so every frame matches; even, because mp4v mangles odd dimensions
 
             for x in range(len(frames)):
 
