@@ -217,7 +217,7 @@ class Box:
     #Call to seed tip trace
     #seed.tip_trace_pcv(b.images, length = 250)
     def tip_trace_pcv(self, length : int = None, threshold_multiplier : float = 1.5, bound_radius : int = 30,
-                      stabilize : bool = True, stabilize_bottom_trim : int = 100, stabilize_search_margin : int = 60):
+                      stabilize : bool = True, stabilize_bottom_trim : int = 100, stabilize_search_margin : int = 200):
         count = 1
         os.makedirs("/app/results/stabilized_videos_single_seed", exist_ok=True)
         for seed in self.seeds:
