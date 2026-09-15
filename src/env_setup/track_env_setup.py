@@ -5,6 +5,7 @@ import src.myutilities.box as box
 import src.myutilities.util as util
 import src.retnet.model as model
 import gc
+from IPython.display import clear_output
 seed_model_obj = model.SeedModel("/app/models/SeedInference.h5")
 
 plt.rcParams['figure.figsize'] = [10, 10]
@@ -40,10 +41,10 @@ def seed_localization_and_tip_tracking(
     - stabilize_search_margin (int): Px searched around the seed box; must exceed the worst jitter.
     """
     box_list = util.listdir_nohidden(data_path)
-    print("The following experiments are available for tracking:")
-    print(box_list)
 
     for expt in box_list:
+        clear_output() # the previous box's images and prompts go: one screen per step
+        print("The following experiments are available for tracking:", box_list)
         while True:
             track = input("Would you like to track box #" + str(expt) + "? (y) or (n): ")
             if track == "y" or track == "n":
@@ -54,6 +55,7 @@ def seed_localization_and_tip_tracking(
             box_path = os.path.join(data_path, expt)
             b = box.Box(box_path)
             b.init_seeds(seed_model_obj, automatic=automatic)   # auto seed bounding boxes (honors `automatic`)
+            if stabilize: b.start_registration(stabilize_bottom_trim, stabilize_search_margin) # background pass over the frames while you pick germination frames
             # Germination detection is ALWAYS manual: the automatic path in
             # Seed.germination_detection() is an unfinished stub that returns without
             # setting a germination frame, which silently skips tip tracing + saving.

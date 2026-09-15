@@ -1,6 +1,8 @@
 import concurrent.futures
+import threading
 import time
 from src.myutilities import util
+from src.myutilities.frames import Frames, iter_frames
 import src.myutilities.io as io
 import numpy as np
 import src.retnet.model as retnet
@@ -23,7 +25,7 @@ class Box:
     a holder) ro where the neural net fails to find one or more seeds, there is a grid based manual seed location method.
     """
     
-    #This is the list where the raw images will be stored in memory. This will be quite large, which is why the call to the garbage collector is necessary between analysis of each box.
+    # The box's frames: a Frames (frames.py), read from disk on demand rather than held in memory.
     images = []
     
     def __init__(self, path, save_path = "/app/data/"):
@@ -39,8 +41,8 @@ class Box:
             the experiment number of the box, parsed from the full path, and kept as a string
         my_list : list
             list of paths to all image files associated with this experiment
-        images : list
-            list of images in memory
+        images : Frames
+            the image series, read from disk on demand (frames.py)
         seeds : list
             list of seed objects within the box
         """
@@ -49,14 +51,11 @@ class Box:
         self._save_path = os.path.normpath(save_path) + f"/{self._qr_number}"
         my_list = [f for f in util.listdir_nohidden(self._path)
                    if os.path.splitext(f)[1].lower() in IMAGE_EXTENSIONS] # cv2 returns None for non-images, which only surfaces much later as a cryptic TypeError deep in tracking
-        my_list = [os.path.join(self._path, l) for l in my_list]
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            all_images = executor.map(io.read_image_single_channel, my_list)
-        self.images = [img for img in all_images] # numpy array of images, grayscale mode
-        bad = [p for p, img in zip(my_list, self.images) if img is None] # a corrupt/truncated frame still gets through the extension filter
-        if bad: raise ValueError(f"{len(bad)} of {len(my_list)} files in {self._path} could not be read as images, e.g. {os.path.basename(bad[0])}")
-        print(f"box {self._qr_number}: loaded {len(self.images)} frames")
+        if not my_list: raise ValueError(f"no image files in {self._path}")
+        self.images = Frames([os.path.join(self._path, l) for l in my_list]) # read on demand: a few hundred MB instead of ~2.9 GB per box; a corrupt frame raises, naming the file, when first read
+        print(f"box {self._qr_number}: {len(self.images)} frames (read on demand)")
         self.seeds = [] # Seed objects
+        self._reg_thread, self._reg_error = None, None # background seed registration, see start_registration()
     
         
     def init_seeds(self, seed_model: retnet.SeedModel, automatic : bool = True):
@@ -83,11 +82,9 @@ class Box:
                                           sort=True)
             
             disp = cv2.cvtColor(self.images[0], cv2.COLOR_GRAY2BGR)
-            plt.imshow(disp)
-            plt.show()
+            util.show(disp, f"box {self._qr_number} · first frame · the detector found {len(scores)} candidate seeds")
             
             while True:
-                print(len(scores))
                 num_seeds = input("How many seeds are in this box?")
                 if num_seeds.isdigit():
                     break
@@ -118,8 +115,7 @@ class Box:
                 s.y2 = s.y2 + 100
                 cv2.rectangle(disp,(s.final_x1, s.final_y1),(s.final_x2,s.final_y2),(255,0,0),5)
 
-            plt.imshow(disp)
-            plt.show()
+            util.show(disp, f"box {self._qr_number} · {len(self.seeds)} seed(s) boxed")
         
         
             while True:
@@ -148,8 +144,7 @@ class Box:
             last = cv2.line(last, (0, r), (np.shape(last)[1], r), (0, 255, 0), thickness=5) 
         
         disp = np.concatenate((first, last), axis = 1)
-        plt.imshow(disp)
-        plt.show()
+        util.show(disp, f"box {self._qr_number} · manual seed entry · first | last frame, grid lines every 500 px")
         
         while True:
             num_seeds = input("How many seeds are in this box?")
@@ -190,8 +185,7 @@ class Box:
 
                 germ_region = disp[int(top_y):int(bottom_y), int(left_x):int(right_x)]
 
-                plt.imshow(germ_region)
-                plt.show()
+                util.show(germ_region, f"box {self._qr_number} · seed #{s + 1} · proposed germination region")
                 
                 while True:
                     cont = input("Does this look good (y) or do you need to redo (r).")
@@ -214,22 +208,55 @@ class Box:
             seed.germination_detection(self.images, count, save_path, threshold_multiplier = threshold_multiplier, automatic = automatic)
             count += 1
 
-    #Call to seed tip trace
-    #seed.tip_trace_pcv(b.images, length = 250)
+    def start_registration(self, bottom_trim : int = 100, search_margin : int = 200):
+        """
+        Register every seed (Seed.register_to_seed) on a background thread. Registration needs only the
+        seed boxes, not the germination frames, so its passes over the frames run while the user is
+        still bisecting for germination. Its messages go to each seed's log, shown at validation.
+        """
+        if self._reg_thread is not None: return
+        def run():
+            try:
+                for seed in self.seeds: seed.register_to_seed(self.images, bottom_trim = bottom_trim, search_margin = search_margin)
+            except Exception as e: self._reg_error = e # re-raised in the foreground by wait_registration()
+        self._reg_thread = threading.Thread(target = run, daemon = True)
+        self._reg_thread.start()
+
+    def wait_registration(self):
+        if self._reg_thread is None: return
+        if self._reg_thread.is_alive(): print("waiting for seed registration to finish ...")
+        self._reg_thread.join()
+        if self._reg_error is not None: raise self._reg_error
+
     def tip_trace_pcv(self, length : int = None, threshold_multiplier : float = 1.5, bound_radius : int = 30,
                       stabilize : bool = True, stabilize_bottom_trim : int = 100, stabilize_search_margin : int = 200):
-        count = 1
-        os.makedirs("/app/results/stabilized_videos_single_seed", exist_ok=True)
-        for seed in self.seeds:
-            if seed.germination_indicator:
-                if stabilize: # local per-seed registration; must run before tracking uses the offsets
-                    seed.register_to_seed(self.images, bottom_trim = stabilize_bottom_trim, search_margin = stabilize_search_margin)
-                seed.tip_trace_pcv(self.images, length = length, tot_length = len(self.images), threshold_multiplier = threshold_multiplier, bound_radius = bound_radius)
-                seed.make_video(self.images,  "/app/results/stabilized_videos_single_seed" + f"/{self._qr_number}_{count}.mp4", trace_tip=True)
-            count = count + 1
-            #seed.tip_trace(self.images, tip_model, length=length, save_path=self._save_path)
-            # TODO remove break
-            # break
+        """
+        Trace every germinated seed in ONE shared pass over the frames, then write all their videos in a
+        second shared pass: two passes per box however many seeds, since frames are read from disk.
+        """
+        out = "/app/results/stabilized_videos_single_seed"
+        os.makedirs(out, exist_ok=True)
+        seeds = [s for s in self.seeds if s.germination_indicator and not s.germination_not_found] # no germination point = nothing to trace from
+        if not seeds: return
+        if stabilize: self.start_registration(stabilize_bottom_trim, stabilize_search_margin) # no-op if already running
+        self.wait_registration() # tracing and video both use the offsets
+        print(f"box {self._qr_number}: tracing {len(seeds)} seed(s) ...")
+        spans = {s: s.trace_start(length, len(self.images), threshold_multiplier, bound_radius) for s in seeds}
+        self._shared_pass(spans, lambda s, fi, frame: s.trace_frame(fi, frame))
+        for s in seeds: s.trace_end()
+        print(f"box {self._qr_number}: writing {len(seeds)} video(s) ...")
+        shape = self.images[0].shape
+        spans = {s: s.video_start(f"{out}/{self._qr_number}_{self.seeds.index(s) + 1}.mp4", shape) for s in seeds} # numbered by position among ALL seeds, as before
+        self._shared_pass(spans, lambda s, fi, frame: s.video_frame(fi, frame))
+        for s in seeds: s.video_end()
+
+    def _shared_pass(self, spans : dict, step):
+        """One prefetched pass over the union of the seeds' (start, stop) frame spans, calling step(seed, index, frame)."""
+        spans = {s: ab for s, ab in spans.items() if ab[0] < ab[1]}
+        if not spans: return
+        for fi, frame in iter_frames(self.images, min(a for a, _ in spans.values()), max(b for _, b in spans.values())):
+            for s, (a, b) in spans.items():
+                if a <= fi < b: step(s, fi, frame)
 
 
     def set_images(self, images):
@@ -315,8 +342,9 @@ class Box:
         for s in self.seeds:
             count = count + 1
             if(s.germination_indicator and not s.germination_not_found):
-                plt.imshow(s.final_trace_img)
-                plt.show()
+                if s.final_trace_img is None: # tracking stopped on its first frame: no trace to judge or save
+                    print(f"box {self._qr_number} · seed {count}: no trace to validate", *s.log, sep = "\n"); continue
+                util.show(s.final_trace_img, "\n".join([f"box {self._qr_number} · seed {count}/{len(self.seeds)} · traced {len(s.tip_coords_pcv) - 1} frames from germination frame {s.germination_frame}"] + s.log))
                 while True:
                     save1 = input("Does this look good enough to save? (y) or (n). If the root curled, press (c) to identify curl frame.")
                     save2 = input("Confirm: Does this look good enough to save? (y) or (n), or (c) to identify curl frame")
@@ -344,8 +372,7 @@ class Box:
                         mid = int((first + last)/2)
                         # calculate crop boundaries for tip video
 
-                        plt.imshow(self.images[mid][y1:y2, x1:x2])
-                        plt.show()
+                        util.show(self.images[mid][y1:y2, x1:x2], f"box {self._qr_number} · seed {count} · curl search · frame {mid}/{len(self.images) - 1}")
                         while True:
                             direction = input("Does curling start (b)efore, (a)fter, (h)ere, do you need to (r)estart, or does it actually not curl (x)?")
                             if direction == "b" or direction == "a" or direction == "h" or direction == "r" or direction == "x":
@@ -396,6 +423,7 @@ class Seed(Image):
         self.final_trace_img = None
         self.curling_start_frame = None
         self.offsets = None # per-frame (dx, dy, score) from register_to_seed(); None = unregistered
+        self.log = [] # registration/tracking messages, shown with the trace at validation (a print would be cleared by the next image)
 
         # keep these and store in database to recreate this Seed object
 
@@ -436,8 +464,7 @@ class Seed(Image):
             last = len(images) - 1
             while True:
                 mid = int((first + last)/2)
-                plt.imshow(images[mid][self.y1:self.y2, self.x1:self.x2])
-                plt.show()
+                util.show(images[mid][self.y1:self.y2, self.x1:self.x2], f"box {self.qr_number} · seed {seed_number} · germination search · frame {mid}/{len(images) - 1}")
                 while True:
                     direction = input("Is germination (b)efore, (a)fter, (h)ere, do you need to (r)estart, or does it not germinate (x)?")
                     if direction == "b" or direction == "a" or direction == "h" or direction == "r" or direction == "x":
@@ -472,17 +499,14 @@ class Seed(Image):
                 locs = np.argwhere(tips_img > 0)
                              
                 
+                if len(locs) == 0: # the threshold found no tips in this crop: nothing to pick (indexing locs[-1] used to crash)
+                    self.log.append(f"germination frame {mid}: no tip candidates found -- marked not found"); self.germination_not_found = True
                 i = len(locs) - 1
-                while i < len(locs):
-                    copy = np.copy(proposed)
-                    #copy[(locs[i][0]-3):(locs[i][0]+3), (locs[i][1]-3):(locs[i][1]+3)] = 0
-                    # Create a 10x10 hollow white box (outer perimeter)
-                    copy[(locs[i][0]-5):(locs[i][0]+6), (locs[i][1]-5)] = 255  # Left vertical line
-                    copy[(locs[i][0]-5):(locs[i][0]+6), (locs[i][1]+5)] = 255  # Right vertical line
-                    copy[(locs[i][0]-5), (locs[i][1]-5):(locs[i][1]+6)] = 255  # Top horizontal line
-                    copy[(locs[i][0]+5), (locs[i][1]-5):(locs[i][1]+6)] = 255  # Bottom horizontal line
-                    plt.imshow(copy)
-                    plt.show()
+                while i < len(locs) and not self.germination_not_found: # confirming "not found" used to leave this loop cycling forever
+                    copy = cv2.cvtColor(proposed, cv2.COLOR_GRAY2RGB)
+                    y, x = int(locs[i][0]), int(locs[i][1])
+                    cv2.rectangle(copy, (x - 5, y - 5), (x + 5, y + 5), (255, 0, 0), 1) # red 10x10 box; clipped at the crop edge, where direct indexing raised
+                    util.show(copy, f"box {self.qr_number} · seed {seed_number} · germination frame {self._tracking_start_frame} · tip candidate {len(locs) - i}/{len(locs)}")
                     while True:
                         response = input("Is this the germination point? (y) or (n)")
                         if response == "y" or response == "n":
@@ -573,7 +597,7 @@ class Seed(Image):
             else:
                 lx, ly = ox, oy
             self.offsets.append((ox, oy, score))
-        if widest > search_margin: print(f"  seed {self.seed_number}: widened search to +/-{widest} px to find the seed")
+        if widest > search_margin: self.log.append(f"registration: widened search to +/-{widest} px to find the seed")
 
         # Re-reference to the MEDIAN position, not frame 0. Frame 0 is the first imaging cycle,
         # which the firmware treats differently (longer light warm-up, first calibration) and which
@@ -585,11 +609,11 @@ class Seed(Image):
 
         dx = [o[0] for o in self.offsets]; dy = [o[1] for o in self.offsets]
         worst = min(o[2] for o in self.offsets)
-        print(f"seed {self.seed_number}: jitter dx {min(dx)}..{max(dx)} px, dy {min(dy)}..{max(dy)} px "
-              f"(template {tx2-tx1}x{ty2-ty1}, worst match {worst:.2f}, {weak}/{len(images)} frames rejected)")
+        self.log.append(f"registration: jitter dx {min(dx)}..{max(dx)} px, dy {min(dy)}..{max(dy)} px "
+                        f"(template {tx2-tx1}x{ty2-ty1}, worst match {worst:.2f}, {weak}/{len(images)} frames rejected)")
         if weak > len(images) * max_weak_frac: # registration is unreliable for this seed; unstabilized beats mis-stabilized
-            print(f"  seed {self.seed_number}: registration FAILED ({weak}/{len(images)} frames) -- stabilization DISABLED for this seed.")
-            print(f"  (if the printed range reaches +/-{search_margin}, the real jitter exceeds the search window: raise stabilize_search_margin)")
+            self.log.append(f"registration FAILED ({weak}/{len(images)} frames) -- stabilization DISABLED for this seed. "
+                            f"If the jitter range reaches +/-{search_margin}, the real jitter exceeds the search window: raise stabilize_search_margin")
             self.offsets = None
 
     def _offset(self, frame_index : int):
@@ -597,158 +621,127 @@ class Seed(Image):
         if not self.offsets or frame_index >= len(self.offsets): return 0, 0
         return self.offsets[frame_index][0], self.offsets[frame_index][1]
 
-    def tip_trace_pcv(self, images_param, length : int = None, tot_length : int = None, threshold_multiplier : float = 1.5, bound_radius : int = 30):
+    def trace_start(self, length : int = None, tot_length : int = None, threshold_multiplier : float = 1.5, bound_radius : int = 30):
         """
-        Method to start tracking the root tip from the identified point of germination saved in each seed object.
+        Set up tip tracing from the identified point of germination. Feed frames to trace_frame() in
+        order over the returned (start, stop) span, then call trace_end(). Box.tip_trace_pcv does this
+        for all of a box's seeds in one shared pass over the frames.
         """
-        
-       
-        # preprocess is a tuple of parameters in a specific order ex. ("blur", "canny", "resize")
-        # images = images_param.copy() # IMPORTANT BUG FIX, pass by reference, aka lists are mutable
-        images = images_param
-        if length > tot_length - self.germination_frame:
-            print("Requested length is longer than there is data for this seed. Will track as many frames as possible.")
+        if length is None or length > tot_length - self.germination_frame: # track as many frames as there are
             length = tot_length - self.germination_frame
-            
-        #coords = self.get_transform_crop_coords(x1=self.germination_x, y1=self.germination_y)
-        #self.transform_crop_coords(self.germination_x - bound_radius, self.germination_x + bound_radius, self.germination_y - bound_radius, self.germination_y + bound_radius)
-#         self.transform_crop_coords(-bound_radius, +bound_radius,-bound_radius, +bound_radius)
-#         self.germination_x = int((coords.x1 + coords.x2)/2)
-#         self.germination_y = int((coords.y1 + coords.y2)/2)
         gdx, gdy = self._offset(self._tracking_start_frame)
         gx, gy = self.germination_x - gdx, self.germination_y - gdy # germination point in frame-0 reference
+        self.x1, self.x2 = gx - bound_radius, gx + bound_radius
+        self.y1, self.y2 = gy - bound_radius, gy + bound_radius
+        self._trace = {"coords": [[gx, gy]], "last": (bound_radius, bound_radius), "count": 0, "length": length,
+                       "threshold_multiplier": threshold_multiplier, "bound_radius": bound_radius, "alive": True}
+        return self._tracking_start_frame, self._tracking_start_frame + length
 
-        self.x1 = gx - bound_radius
-        self.x2 = gx + bound_radius
-        self.y1 = gy - bound_radius
-        self.y2 = gy + bound_radius
-
-        tip_coords = []
-        tip_coords.append([gx, gy])
-        last_x = bound_radius
-        last_y = bound_radius
+    def trace_frame(self, fi : int, frame):
+        """Advance the tip by one frame (frames must come in order). A lost tip stops this seed's trace, logged."""
+        t = self._trace
+        if not t["alive"]: return
+        r = t["bound_radius"]
         try:
-            count = 0
-            for fi in range(self._tracking_start_frame, self._tracking_start_frame + length):
-                dx, dy = self._offset(fi) # crop follows the jitter; self.x1/y1 stay frame-0 referenced
-                image = images[fi][self.y1 + dy:self.y2 + dy, self.x1 + dx:self.x2 + dx]
-
-                threshold_light = pcv.threshold.binary(gray_img=image, threshold=np.median(image)*threshold_multiplier, max_value=255, object_type='light') #try mean?
-                binary_img = pcv.median_blur(gray_img=threshold_light, ksize=5)
-                fill_image = pcv.fill(bin_img=binary_img, size=10)
-                skeleton = pcv.morphology.skeletonize(mask=fill_image)
-                tips_img = pcv.morphology.find_tips(skel_img=skeleton, mask=fill_image)
-                #tips_img = tips_img[20:-20, 20:-20]
-                locs = np.argwhere(tips_img > 0)
-                
-                #Here we take the index of the identified end-points and use np.linalg.norm to find the identified endpoint closest to the last identified tip.
-                #This solves a problem when roots grow somewhat horizontally and the old way of just choosing the bottom-most endpoint would fail because sometimes the 
-                #root starts to grow transiently upward as it circumnutates, which puts the actual tip above the endpoint found where the shootward section of the ro
-                x = locs[np.argmin([np.linalg.norm([last_y, last_x] - l) for l in locs])][1]
-                y = locs[np.argmin([np.linalg.norm([last_y, last_x] - l) for l in locs])][0]
-                
-                #old algorithm which fails when the root circumnutates while growing mostly horizontal
-#                 x = locs[np.argmax(locs, axis =0)[0]][1]
-#                 y = locs[np.argmax(locs, axis =0)[0]][0]
-                
-
-                #self.transform_crop_coords(x, x, y, y)
-                self.transform_crop_coords(x - bound_radius, x + bound_radius, y - bound_radius, y + bound_radius)
-                tip_coords.append([int((self.x2 + self.x1)/2), int((self.y2 + self.y1)/2)])
-                last_x = x
-                last_y = y
-                count = count + 1
+            dx, dy = self._offset(fi) # crop follows the jitter; self.x1/y1 stay frame-0 referenced
+            image = frame[self.y1 + dy:self.y2 + dy, self.x1 + dx:self.x2 + dx]
+            threshold_light = pcv.threshold.binary(gray_img=image, threshold=np.median(image)*t["threshold_multiplier"], max_value=255, object_type='light') #try mean?
+            binary_img = pcv.median_blur(gray_img=threshold_light, ksize=5)
+            fill_image = pcv.fill(bin_img=binary_img, size=10)
+            skeleton = pcv.morphology.skeletonize(mask=fill_image)
+            tips_img = pcv.morphology.find_tips(skel_img=skeleton, mask=fill_image)
+            locs = np.argwhere(tips_img > 0)
+            # Take the endpoint closest to the last tip, not the bottom-most one: a root growing roughly
+            # horizontally circumnutates upward at times, which puts the real tip above other endpoints.
+            last_x, last_y = t["last"]
+            y, x = locs[np.argmin([np.linalg.norm([last_y, last_x] - l) for l in locs])]
+            self.transform_crop_coords(x - r, x + r, y - r, y + r)
+            t["coords"].append([int((self.x2 + self.x1)/2), int((self.y2 + self.y1)/2)])
+            t["last"] = (x, y)
+            t["count"] += 1
         except Exception as e: # was silent: a lost tip truncated the trace with no visible reason
-            print(f"seed {self.seed_number}: tracking STOPPED at frame {self._tracking_start_frame + count} "
-                  f"after {count}/{length} frames -- {e!r}")
+            self.log.append(f"tracking STOPPED at frame {fi} after {t['count']}/{t['length']} frames -- {e!r}")
+            t["alive"] = False
 
-        #print(tip_coords)
-        self.tip_coords_pcv = tip_coords
+    def trace_end(self):
+        self.tip_coords_pcv = self._trace["coords"]
+
+    def tip_trace_pcv(self, images_param, length : int = None, tot_length : int = None, threshold_multiplier : float = 1.5, bound_radius : int = 30):
+        """Trace this seed on its own pass over the frames (Box.tip_trace_pcv shares one pass among all seeds)."""
+        start, stop = self.trace_start(length, tot_length or len(images_param), threshold_multiplier, bound_radius)
+        for fi, frame in iter_frames(images_param, start, stop): self.trace_frame(fi, frame)
+        self.trace_end()
         
+    def video_start(self, path : str, frame_shape : tuple):
+        """
+        Fix the video crop (the seed box plus the whole tip path) and prepare the writer. Feed frames to
+        video_frame() in order over the returned (start, stop) span, then call video_end(). Frames are
+        written as they come instead of collected first, which for a tall crop could reach gigabytes.
+        """
+        self.tip_coords_pcv = np.asarray(self.tip_coords_pcv)
+        x_tip_coords = self.tip_coords_pcv[0:,0]
+        y_tip_coords = self.tip_coords_pcv[0:,1]
+        # Crop must cover the SEED as well as the root path. The tip trajectory starts at the
+        # germination point, so a bbox over it alone clips the seed body to a sliver against the
+        # top edge -- worst when the root grows straight down and the bbox is narrow.
+        x1 = min(min(x_tip_coords), self.final_x1) - 50
+        x2 = max(max(x_tip_coords), self.final_x2) + 50
+        y1 = min(min(y_tip_coords), self.final_y1) - 50
+        y2 = max(max(y_tip_coords), self.final_y2) + 50
+        fh, fw = frame_shape
+        x1, y1 = max(int(x1), 0), max(int(y1), 0) # clamp INTO the frame (x2/y2 were clamped to 0, not fw/fh)
+        x2, y2 = min(int(x2), fw), min(int(y2), fh)
+        cw, ch = (x2 - x1) & ~1, (y2 - y1) & ~1 # constant size so every frame matches; even, because mp4v mangles odd dimensions
+        self._video = {"path": path, "x1": x1, "y1": y1, "cw": cw, "ch": ch, "fw": fw, "fh": fh, "writer": None}
+        self.final_trace_img = None
+        return self._tracking_start_frame, self._tracking_start_frame + len(self.tip_coords_pcv) - 1
+
+    def video_frame(self, fi : int, frame):
+        """Render and write one frame (raw | traced | trace only), shifted by this frame's jitter."""
+        v = self._video
+        x = fi - self._tracking_start_frame # frames since germination = trace segments drawn so far
+        frame = np.copy(frame) # copy: cv2.line below would otherwise burn the trace into a shared frame
+        original = np.copy(frame)
+        black = np.zeros_like(frame)
+        dx, dy = self._offset(fi)
+        for y in range(0, x): # redraw lines in each frame, since base image is different
+            if self.tip_coords_pcv[y][0] != 10000:
+                # coords are frame-0 referenced; += offset puts them on the root in THIS frame
+                cv2.line(frame, (self.tip_coords_pcv[y][0] + dx, self.tip_coords_pcv[y][1] + dy),
+                         (self.tip_coords_pcv[y + 1][0] + dx, self.tip_coords_pcv[y + 1][1] + dy),
+                         (255, 0, 0), 3)
+                cv2.line(black, (self.tip_coords_pcv[y][0] + dx, self.tip_coords_pcv[y][1] + dy),
+                         (self.tip_coords_pcv[y + 1][0] + dx, self.tip_coords_pcv[y + 1][1] + dy),
+                         (255, 0, 0), 3)
+        # crop image based on boundaries, shifted by this frame's jitter so the OUTPUT is stabilized
+        cx1 = min(max(v["x1"] + dx, 0), max(v["fw"] - v["cw"], 0))
+        cy1 = min(max(v["y1"] + dy, 0), max(v["fh"] - v["ch"], 0))
+        original = original[cy1:cy1 + v["ch"], cx1:cx1 + v["cw"]]
+        frame = frame[cy1:cy1 + v["ch"], cx1:cx1 + v["cw"]]
+        black = black[cy1:cy1 + v["ch"], cx1:cx1 + v["cw"]]
+        # cv2_videoWriter BGR color requirement
+        buffer = np.full(np.shape(original), 255, dtype=np.uint8)[:,1:3]
+        buffer = cv2.cvtColor(buffer, cv2.COLOR_GRAY2BGR)
+        original = cv2.cvtColor(original, cv2.COLOR_GRAY2BGR)
+        frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+        black = cv2.cvtColor(black, cv2.COLOR_GRAY2BGR)
+        complete = np.concatenate((original, buffer, frame, buffer, black), axis=1)
+        if v["writer"] is None: # same codec and fps as io.make_video_cv2
+            v["writer"] = cv2.VideoWriter(v["path"], cv2.VideoWriter_fourcc(*'mp4v'), 15, (complete.shape[1], complete.shape[0]))
+        v["writer"].write(complete)
+        self.final_trace_img = complete # the last frame is shown for QC at validation
+
+    def video_end(self):
+        if self._video["writer"] is None: return
+        self._video["writer"].release()
+        self.log.append(f"video: {self._video['path']}")
+
     def make_video(self, images, path: str, trace_tip: bool = True):
-
-        # pass by value immutable types, pass by reference mutable types
-        # images list is mutable and passed by reference so there is a need to copy the list in order to avoid overwriting
-
-        # convert to numpy object, this will keep self.images integrity
-        #frames = np.array(images)
-        frames = images.copy()
-        
-        final_frames = []
-
-        frames = frames[(self._tracking_start_frame):(len(self.tip_coords_pcv) + self._tracking_start_frame - 1)]
-        
-        #print(len(frames))
-        
-        #This if statement should be before inner for loop below where cv2 places lines on images
-        if trace_tip:
-            self.tip_coords_pcv = np.asarray(self.tip_coords_pcv)
-            x_tip_coords = self.tip_coords_pcv[0:,0]
-            y_tip_coords = self.tip_coords_pcv[0:,1]
-
-            # Crop must cover the SEED as well as the root path. The tip trajectory starts at the
-            # germination point, so a bbox over it alone clips the seed body to a sliver against the
-            # top edge -- worst when the root grows straight down and the bbox is narrow.
-            x1 = min(min(x_tip_coords), self.final_x1) - 50
-            x2 = max(max(x_tip_coords), self.final_x2) + 50
-            y1 = min(min(y_tip_coords), self.final_y1) - 50
-            y2 = max(max(y_tip_coords), self.final_y2) + 50
-
-            fh, fw = frames[0].shape
-            x1, y1 = max(int(x1), 0), max(int(y1), 0) # clamp INTO the frame (x2/y2 were clamped to 0, not fw/fh)
-            x2, y2 = min(int(x2), fw), min(int(y2), fh)
-            cw, ch = (x2 - x1) & ~1, (y2 - y1) & ~1 # constant size so every frame matches; even, because mp4v mangles odd dimensions
-
-            for x in range(len(frames)):
-
-                frame = np.copy(frames[x]) # copy: cv2.line below would otherwise burn the trace into
-                                           # self.images, corrupting later seeds in the same box
-                #ret,frame = cv2.threshold(frame,np.median(frame),255,cv2.THRESH_TOZERO)
-                original = np.copy(frame)
-                black = np.zeros_like(frame)
-                dx, dy = self._offset(self._tracking_start_frame + x)
-                #frame = Pillow.fromarray(frame, "RGB")
-                # redraw lines in each frame, since base image is different
-                for y in range(0, x):
-                    #print(x)
-                    if self.tip_coords_pcv[y][0] != 10000:
-                        # coords are frame-0 referenced; += offset puts them on the root in THIS frame
-                        cv2.line(frame, (self.tip_coords_pcv[y][0] + dx, self.tip_coords_pcv[y][1] + dy),
-                                 (self.tip_coords_pcv[y + 1][0] + dx, self.tip_coords_pcv[y + 1][1] + dy),
-                                 (255, 0, 0), 3)
-
-                        cv2.line(black, (self.tip_coords_pcv[y][0] + dx, self.tip_coords_pcv[y][1] + dy),
-                                 (self.tip_coords_pcv[y + 1][0] + dx, self.tip_coords_pcv[y + 1][1] + dy),
-                                 (255, 0, 0), 3)
-
-                # crop image based on boundaries, shifted by this frame's jitter so the OUTPUT is stabilized
-                cx1 = min(max(int(x1) + dx, 0), max(fw - cw, 0))
-                cy1 = min(max(int(y1) + dy, 0), max(fh - ch, 0))
-                original = original[cy1:cy1 + ch, cx1:cx1 + cw]
-                frame = frame[cy1:cy1 + ch, cx1:cx1 + cw]
-                black = black[cy1:cy1 + ch, cx1:cx1 + cw]
-
-                # cv2_videoWriter BGR color requirement
-                buffer = np.full(np.shape(original), 255, dtype=np.uint8)[:,1:3]
-                buffer = cv2.cvtColor(buffer, cv2.COLOR_GRAY2BGR)
-                original = cv2.cvtColor(original, cv2.COLOR_GRAY2BGR)
-                frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
-                black = cv2.cvtColor(black, cv2.COLOR_GRAY2BGR)
-                
-                complete = np.concatenate((original, buffer, frame, buffer, black), axis=1)
-                
-                final_frames.append(complete)
-                #print(len(final_frames))
-                #print(len(frames))
-
-            print("___FRAME SIZE___", "x1", x1, "y1", y1, "x2", x2, "y2", y2)
-            print("___PATH___", path)
-        
-        #save final frame for QC
-        self.final_trace_img = final_frames[-1]
-        
-        # print(np.shape(final_frames[0]))
-        io.make_video_cv2(final_frames, path)
+        """Write this seed's trace video on its own pass (Box.tip_trace_pcv shares one pass among all seeds)."""
+        if not trace_tip: raise ValueError("make_video only implements trace_tip=True (the untraced branch never produced any frames)")
+        start, stop = self.video_start(path, images[0].shape)
+        for fi, frame in iter_frames(images, start, stop): self.video_frame(fi, frame)
+        self.video_end()
 
 
 

@@ -10,7 +10,10 @@ parser.add_argument('--data_dir', type=str, required=True, help='Path to image d
 parser.add_argument('--results_dir', type=str, required=True, help='Path to save results directory')
 parser.add_argument('--container', type=str, default='docker', choices=['docker', 'singularity'], 
                     help='Container runtime to use (docker or singularity)')
+parser.add_argument('--dev', action='store_true',
+                    help="Mount this checkout's src/ and code/ over the image's copies, to test local changes without a CI rebuild")
 args = parser.parse_args()
+dev_mounts = [f"{os.path.dirname(os.path.abspath(__file__))}/{d}:/app/{d}" for d in ("src", "code")] if args.dev else [] # code/ too, so notebook edits save into this checkout
 
 data_dir = args.data_dir
 results_dir = args.results_dir
@@ -39,6 +42,7 @@ if container_type == "docker":
         "docker", "run", "--rm", "-it", "-p", "8888:8888",
         "-v", f"{os.path.abspath(data_dir)}:/app/data",
         "-v", f"{os.path.abspath(results_dir)}:/app/results",
+        *[a for m in dev_mounts for a in ("-v", m)],
         "-e", f"DATA_DIR={os.path.abspath(data_dir)}",
         "-e", f"RESULTS_DIR={os.path.abspath(results_dir)}",
         image_name  
@@ -62,6 +66,7 @@ elif container_type == "singularity":
         "singularity", "exec",
         "--bind", f"{os.path.abspath(data_dir)}:/app/data",
         "--bind", f"{os.path.abspath(results_dir)}:/app/results",
+        *[a for m in dev_mounts for a in ("--bind", m)],
         f"--env=DATA_DIR={os.path.abspath(data_dir)}",
         f"--env=RESULTS_DIR={os.path.abspath(results_dir)}",
         singularity_file,

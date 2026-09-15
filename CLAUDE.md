@@ -9,8 +9,10 @@
   triggers on pushes to `main` touching `Dockerfile`, `src/**`, `code/**`, or the workflow itself.
   Merging a `src/`/`code/` change is enough — no manual `Dockerfile` bump. To force a rebuild with
   no file change, run the workflow from the Actions tab (`workflow_dispatch`).
-- Only `main` builds. Feature-branch pushes never touch `:latest`, so test those by `docker cp`-ing
-  changed files into the running container and restarting the Jupyter kernel.
+- Only `main` builds. Feature-branch pushes never touch `:latest`, so test those with
+  `python3 tracking.py --dev ...`, which mounts this checkout's `src/` and `code/` over the image's copies.
+- Frames are read on demand (`src/myutilities/frames.py`), never loaded whole: a 3000×3000 box is ~2.9 GB.
+  Notebook images go through `util.show()` (one image at a time); don't add bare `plt.show()` calls.
 
 ## Code Style
 - **Imports**: Standard library → Third-party → Local (relative paths)

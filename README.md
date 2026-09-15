@@ -38,6 +38,10 @@ python3 tracking.py --data_dir /path/to/image_series_parent/ --results_dir /path
 one box's image series). Open the tokenized URL **printed in the terminal** (not the bare
 `localhost:8888`), then run `code/track.ipynb`.
 
+To test local changes to `src/` or `code/` without waiting for a CI rebuild, add **`--dev`**: it mounts
+this checkout's `src/` and `code/` over the image's copies, so notebook edits also save straight into
+the checkout.
+
 ## The tracking workflow (`code/track.ipynb`)
 
 For each box you say `y` to, the notebook runs:
@@ -54,6 +58,14 @@ For each box you say `y` to, the notebook runs:
 
 Tunable per run in the notebook (species/lighting dependent): `germination_threshold_multiplier`,
 `tip_trace_length`, `tip_trace_threshold_multiplier`, `tip_trace_bound_radius`.
+
+**One image at a time.** Each step replaces the previous image in the cell's output, headed by a status
+line such as `box 9 · seed 2 · germination search · frame 159/318`. Registration and tracking messages
+are shown with the trace at validation.
+
+**Memory.** Frames are read from disk on demand rather than loaded whole, so a 319-frame 3000×3000 box
+needs a few hundred MB instead of ~2.9 GB. Per-seed registration runs in the background while you pick
+germination frames; tracing and video writing then take one pass over the frames each, per box.
 
 ## Outputs (under `--results_dir`)
 
@@ -73,10 +85,9 @@ PlantCV, TensorFlow/RetinaNet, and the `SeedInference.h5` model) + JupyterLab + 
 `code/` and `src/`. CI (`.github/workflows/docker-publish.yml`) builds and pushes
 `root-tracking-env:latest` to GHCR.
 
-> ⚠️ **CI only rebuilds on changes to `Dockerfile` or the workflow** — *not* on `code/`/`src/`
-> changes (which are baked into the image at build time). So **when you edit the notebook or
-> `src/`, also bump the `Dockerfile`** (a trivial comment change is enough) so the published image
-> actually updates. This is why the history has recurring "update docker image" commits.
+CI rebuilds on pushes to `main` that touch `Dockerfile`, `src/**`, `code/**`, or the workflow, so merging
+a code change is enough — no `Dockerfile` bump needed. Only `main` builds; test a branch with
+`tracking.py --dev`.
 
 ## Not yet implemented / un-ported
 
