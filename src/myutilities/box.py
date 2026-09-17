@@ -58,51 +58,58 @@ class Box:
         self._reg_thread, self._reg_error = None, None # background seed registration, see start_registration()
     
         
-    def init_seeds(self, seed_model: retnet.SeedModel, automatic : bool = True):
+    def init_seeds(self, seed_model: retnet.SeedModel, automatic : bool = True, seed_confidence : float = 0.05,
+                   search_x : tuple = (1/6, 5/6), search_y : tuple = (0.0, 0.75)):
         """
         This method optionally runs automatic seed detection. It can also manually define regions of seeds. It then creates the appropriate number of seed objects associated with the respective box objects.
-        
+
         Parameters
         ----------
         seed_model : retnet.SeedModel
             This is the trained retinanet model for detecting seeds in image
         automatic : bool
             true: attempt automatic seed detection. false: use manual seed detection.
+        seed_confidence : float
+            Noise floor for the detector, NOT a seed/not-seed decision -- the seed count the user
+            enters decides how many detections are kept. Confidence varies hugely between boxes
+            (measured 2026-09-17: a real seed scored 0.13 in one box and 0.98 in the next, at equal
+            brightness and contrast), so any threshold high enough to exclude noise also drops seeds.
+        search_x, search_y : tuple
+            Search band, as (low, high) FRACTIONS of frame width/height. Everything outside is blanked
+            before inference and any detection centred outside is dropped, which keeps the round
+            seed-shaped objects at the bottom of the vessel out. Fractions, not pixels, so the band
+            travels to any frame size. Measured over 8 boxes, real seeds sat at y 0.26-0.46, x 0.26-0.72.
         """
-        
-        seed_model._confidence_cutoff = .3
+
+        seed_model._confidence_cutoff = seed_confidence
         #only run if "automatic mode" of seed detection is desired.
         if automatic:
-            initial_image = np.copy(self.images[0])
-            y,x =  initial_image.shape
-            startx = x//2-(1000)
-            initial_image[:,0:startx] = 0
-            initial_image[:,(startx+2000):x] = 0
+            h, w = self.images[0].shape
+            bx1, bx2 = int(search_x[0] * w), int(search_x[1] * w)
+            by1, by2 = int(search_y[0] * h), int(search_y[1] * h)
+            initial_image = np.zeros_like(self.images[0])
+            initial_image[by1:by2, bx1:bx2] = self.images[0][by1:by2, bx1:bx2] # only the band reaches the model
             seeds_full, scores = seed_model.detect(image_arr=cv2.cvtColor(initial_image, cv2.COLOR_GRAY2BGR),
                                           sort=True)
-            
+            found = sorted([(s, sd) for s, sd in zip(scores, seeds_full)
+                            if bx1 <= (sd.x1 + sd.x2) / 2 <= bx2 and by1 <= (sd.y1 + sd.y2) / 2 <= by2],
+                           key = lambda t: -t[0]) # best first; one centred outside the band is not a seed we can track
+
             disp = cv2.cvtColor(self.images[0], cv2.COLOR_GRAY2BGR)
-            util.show(disp, f"box {self._qr_number} · first frame · the detector found {len(scores)} candidate seeds")
-            
+            util.show(disp, f"box {self._qr_number} · first frame · {len(found)} candidates in the search band"
+                            f" (best scores: {', '.join(f'{s:.2f}' for s, _ in found[:8]) if found else 'none'})")
+
             while True:
                 num_seeds = input("How many seeds are in this box?")
                 if num_seeds.isdigit():
                     break
                 else:
                     print("non-numeric entry")
-            
-            res = sorted(sorted(range(len(scores)), key = lambda sub: scores[sub])[-int(num_seeds):])
-              
-            seeds = []
-            for index in res:
-                seeds.append(seeds_full[index])   
-            print(len(seeds))
-          
 
-            for count, seed in enumerate(seeds):
-                if ((seed.y1 > (.1 * np.shape(self.images[0])[0])) and (seed.y1 < (.9 * np.shape(self.images[0])[0]))):
-                    if ((seed.x1 > (.1 * np.shape(self.images[0])[1])) and (seed.x1 < (.9 * np.shape(self.images[0])[1]))):
-                        self.seeds.append(Seed(seed, self._qr_number, count + 1))
+            n = int(num_seeds)
+            if len(found) < n: print(f"only {len(found)} candidate(s) in the search band, not {n} -- enter 'm' below for manual entry")
+            chosen = sorted(found[:n], key = lambda t: t[1].x1) # the n best by score, then left to right
+            self.seeds = [Seed(sd, self._qr_number, i + 1) for i, (_, sd) in enumerate(chosen)]
 
             for s in self.seeds:
                 s.final_x1 = s.final_x1 - 50
@@ -115,7 +122,7 @@ class Box:
                 s.y2 = s.y2 + 100
                 cv2.rectangle(disp,(s.final_x1, s.final_y1),(s.final_x2,s.final_y2),(255,0,0),5)
 
-            util.show(disp, f"box {self._qr_number} · {len(self.seeds)} seed(s) boxed")
+            util.show(disp, f"box {self._qr_number} · {len(self.seeds)} seed(s) boxed · scores {', '.join(f'{s:.2f}' for s, _ in chosen) if chosen else 'none'}")
         
         
             while True:

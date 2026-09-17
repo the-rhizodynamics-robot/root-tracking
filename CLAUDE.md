@@ -11,6 +11,9 @@
   no file change, run the workflow from the Actions tab (`workflow_dispatch`).
 - Only `main` builds. Feature-branch pushes never touch `:latest`, so test those with
   `python3 tracking.py --dev ...`, which mounts this checkout's `src/` and `code/` over the image's copies.
+- Seed detection proposes the **N best-scoring** detections, N being the count the user enters, inside a
+  search band given as **fractions** of the frame (`search_x`/`search_y`). Never reintroduce a confidence
+  threshold as a seed/not-seed test: scores vary hugely per box (0.13 vs 0.98 on equally clear seeds).
 - Frames are read on demand (`src/myutilities/frames.py`), never loaded whole: a 3000×3000 box is ~2.9 GB.
   Notebook images go through `util.show()` (one image at a time); don't add bare `plt.show()` calls.
 
