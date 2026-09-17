@@ -48,8 +48,9 @@ For each box you say `y` to, the notebook runs:
 
 1. **Seed localization** — a RetinaNet model detects seeds inside a **search band** (fractions of the
    frame: `seed_search_x` 1/6–5/6, `seed_search_y` 0–0.75, which keeps the round objects at the bottom
-   of the vessel out), and you are asked how many seeds the box holds. It then proposes **that many**,
-   the best-scoring ones, rather than however many clear a confidence threshold — the model's
+   of the vessel out), and you are asked how many seeds the box holds. It then suppresses overlapping
+   duplicate detections on the same seed (`seed_max_overlap`, default 0.3 intersection-over-union) and
+   proposes **that many**, the best-scoring ones, rather than however many clear a confidence threshold — the model's
    confidence varies a lot between boxes (0.13 on a real seed in one box, 0.98 in the next), so the
    count you give decides. `seed_confidence` (default 0.05) is only a noise floor. `c` accepts, `m`
    switches to manual grid entry.

@@ -23,6 +23,7 @@ def seed_localization_and_tip_tracking(
     seed_confidence=0.05,
     seed_search_x=(1/6, 5/6),
     seed_search_y=(0.0, 0.75),
+    seed_max_overlap=0.3,
     stabilize=True,
     stabilize_bottom_trim=100,
     stabilize_search_margin=200
@@ -42,6 +43,8 @@ def seed_localization_and_tip_tracking(
       detections are kept (the model's confidence on a real seed ranges 0.13-0.98 between boxes).
     - seed_search_x / seed_search_y (tuple): search band as (low, high) fractions of frame width/height.
       The default y band stops at 0.75 to exclude the seed-shaped objects at the bottom of the vessel.
+    - seed_max_overlap (float): detections overlapping by more than this (intersection over union) are
+      treated as the same seed and only the best-scoring one is proposed.
     - stabilize (bool): Register each seed to frame 0 to remove residual gantry jitter locally.
     - stabilize_bottom_trim (int): Px trimmed off the bottom of the seed box (the root-growth region)
       before it is used as the registration template.
@@ -62,7 +65,8 @@ def seed_localization_and_tip_tracking(
             box_path = os.path.join(data_path, expt)
             b = box.Box(box_path)
             b.init_seeds(seed_model_obj, automatic=automatic, seed_confidence=seed_confidence,
-                         search_x=seed_search_x, search_y=seed_search_y)   # proposes the N best in the band, N = the count you enter
+                         search_x=seed_search_x, search_y=seed_search_y,
+                         max_overlap=seed_max_overlap)   # proposes the N best in the band, N = the count you enter
             if stabilize: b.start_registration(stabilize_bottom_trim, stabilize_search_margin) # background pass over the frames while you pick germination frames
             # Germination detection is ALWAYS manual: the automatic path in
             # Seed.germination_detection() is an unfinished stub that returns without

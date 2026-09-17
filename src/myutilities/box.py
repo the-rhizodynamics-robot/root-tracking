@@ -15,6 +15,33 @@ from src.myutilities.image import Image
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"} # everything else in a box folder is not a frame
 
+def _overlap(a, b):
+    """Intersection over union of two detection boxes: 0 = no contact, 1 = identical."""
+    ix = max(0, min(a.x2, b.x2) - max(a.x1, b.x1))
+    iy = max(0, min(a.y2, b.y2) - max(a.y1, b.y1))
+    inter = ix * iy
+    union = (a.x2 - a.x1) * (a.y2 - a.y1) + (b.x2 - b.x1) * (b.y2 - b.y1) - inter
+    return inter / union if union > 0 else 0.0
+
+def suppress_overlaps(found : list, max_overlap : float = 0.3):
+    """
+    Non-maximum suppression over (score, detection) pairs, best first: keep a detection only if it does
+    not overlap an already-kept, better-scoring one by more than max_overlap.
+
+    The detector proposes several boxes per seed. RetinaNet's own suppression clears the obvious
+    duplicates, but weak ones survive down at seed_confidence -- in box 16 the 0.673 detection at
+    x 0.475-0.553 and the 0.255 at x 0.451-0.528 are the same seed. Since the user's seed count now
+    decides how many detections are kept, an unsuppressed duplicate spends a slot that belongs to a
+    fainter real seed. Real neighbouring seeds sit ~0.10 of frame width apart with ~0.08-wide boxes,
+    so they barely touch and are never suppressed.
+
+    Returns (kept pairs, number dropped).
+    """
+    kept = []
+    for score, sd in found: # `found` must be sorted best first
+        if all(_overlap(sd, k) <= max_overlap for _, k in kept): kept.append((score, sd))
+    return kept, len(found) - len(kept)
+
 class Box:
     """The box class defines the data derived from a single magenta box in an experiment.
     
@@ -59,7 +86,7 @@ class Box:
     
         
     def init_seeds(self, seed_model: retnet.SeedModel, automatic : bool = True, seed_confidence : float = 0.05,
-                   search_x : tuple = (1/6, 5/6), search_y : tuple = (0.0, 0.75)):
+                   search_x : tuple = (1/6, 5/6), search_y : tuple = (0.0, 0.75), max_overlap : float = 0.3):
         """
         This method optionally runs automatic seed detection. It can also manually define regions of seeds. It then creates the appropriate number of seed objects associated with the respective box objects.
 
@@ -79,6 +106,9 @@ class Box:
             before inference and any detection centred outside is dropped, which keeps the round
             seed-shaped objects at the bottom of the vessel out. Fractions, not pixels, so the band
             travels to any frame size. Measured over 8 boxes, real seeds sat at y 0.26-0.46, x 0.26-0.72.
+        max_overlap : float
+            Two detections overlapping by more than this (intersection over union) are the same seed;
+            the weaker one is dropped. See suppress_overlaps().
         """
 
         seed_model._confidence_cutoff = seed_confidence
@@ -94,9 +124,11 @@ class Box:
             found = sorted([(s, sd) for s, sd in zip(scores, seeds_full)
                             if bx1 <= (sd.x1 + sd.x2) / 2 <= bx2 and by1 <= (sd.y1 + sd.y2) / 2 <= by2],
                            key = lambda t: -t[0]) # best first; one centred outside the band is not a seed we can track
+            found, duplicates = suppress_overlaps(found, max_overlap) # several boxes per seed otherwise eat the user's seed count
 
             disp = cv2.cvtColor(self.images[0], cv2.COLOR_GRAY2BGR)
             util.show(disp, f"box {self._qr_number} · first frame · {len(found)} candidates in the search band"
+                            f"{f', {duplicates} overlapping duplicate(s) suppressed' if duplicates else ''}"
                             f" (best scores: {', '.join(f'{s:.2f}' for s, _ in found[:8]) if found else 'none'})")
 
             while True:
