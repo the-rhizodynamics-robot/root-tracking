@@ -1,0 +1,6 @@
+# Bytecode, written into src/ by the container through the --dev mount
+__pycache__/
+*.py[cod]
+
+# Jupyter autosaves, written into code/ by the notebook
+.ipynb_checkpoints/
