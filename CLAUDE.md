@@ -15,6 +15,10 @@
   search band given as **fractions** of the frame (`search_x`/`search_y`), after suppressing overlapping
   duplicates on one seed (`max_overlap`, IoU). Never reintroduce a confidence
   threshold as a seed/not-seed test: scores vary hugely per box (0.13 vs 0.98 on equally clear seeds).
+- Tip traces are written by `src/myutilities/tipcsv.py` (JSON header + `frame,x,y`); the old one-row
+  format is still readable. `src/myutilities/quantify.py` turns a trace into per-frame measurements —
+  a port of the R in `reference/r_analysis/`, which is a relic and must not be wired into anything.
+  `px_per_mm` is rig-specific: read it from the run manifest or take it as an argument, never hardcode.
 - Frames are read on demand (`src/myutilities/frames.py`), never loaded whole: a 3000×3000 box is ~2.9 GB.
   Notebook images go through `util.show()` (one image at a time); don't add bare `plt.show()` calls.
 

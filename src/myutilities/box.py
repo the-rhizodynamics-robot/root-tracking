@@ -2,13 +2,13 @@ import concurrent.futures
 import threading
 import time
 from src.myutilities import util
+from src.myutilities import tipcsv
 from src.myutilities.frames import Frames, iter_frames
 import src.myutilities.io as io
 import numpy as np
 import src.retnet.model as retnet
 import cv2
 from plantcv import plantcv as pcv
-import csv
 import os
 from matplotlib import pyplot as plt
 from src.myutilities.image import Image
@@ -393,11 +393,10 @@ class Box:
                         print("Invalid response.")
                 if save1 == "y":
                     print("Saving coordinates.")
-                    os.makedirs("/app/results/tip_coordinates/", exist_ok=True)
-                    with open("/app/results/tip_coordinates/" + f"/{self._qr_number}_{count}" + ".csv", 'w') as myfile:
-                        wr = csv.writer(myfile, quoting=csv.QUOTE_ALL)
-                        wr.writerow(s.tip_coords_pcv)
-                        #do some other saving stuff
+                    meta = tipcsv.write_tip_csv(f"/app/results/tip_coordinates/{self._qr_number}_{count}.csv",
+                                                s.tip_coords_pcv, self._qr_number, count, s.germination_frame,
+                                                source_dir = self._path)
+                    print(f"  {meta['frames']} frames from germination frame {meta['germination_frame']}")
                 elif save1 =="c":
                     first = 0
                     last = len(self.images) - 1
@@ -436,13 +435,10 @@ class Box:
                             last = mid
                             
                     print("Saving coordinates.")
-                    coords = s.tip_coords_pcv[:(s.curling_start_frame - s._tracking_start_frame)]
-                    coords[-1,0] = 100000
-                    coords[-1,1] = 100000
-                    with open("/app/results/tip_coordinates/" + f"/{self._qr_number}_{count}" + ".csv", 'w') as myfile:
-                        wr = csv.writer(myfile, quoting=csv.QUOTE_ALL)
-                        wr.writerow(coords)
-                        #do some other saving stuff
+                    meta = tipcsv.write_tip_csv(f"/app/results/tip_coordinates/{self._qr_number}_{count}.csv",
+                                                s.tip_coords_pcv, self._qr_number, count, s.germination_frame,
+                                                curl_frame = s.curling_start_frame, source_dir = self._path)
+                    print(f"  {meta['frames']} frames, truncated at curl frame {meta['curl_frame']}") # the frame is in the header now, not a 100000 sentinel row
                     
 
 class Seed(Image):

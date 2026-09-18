@@ -10,7 +10,7 @@ engine** (on Windows: **WSL2 + Docker CE**, same as file-sorting). The two runne
 thin launchers that pull `ghcr.io/the-rhizodynamics-robot/root-tracking-env:latest` and
 `docker run` it with your folders bind-mounted.
 
-## Two tools
+## Tools
 
 ### `unspool.py` — video → image series
 It's far more storage-efficient to keep experiments as MP4s than raw frames. This turns a
@@ -79,10 +79,45 @@ germination frames; tracing and video writing then take one pass over the frames
 |---|---|---|
 | Per-seed trace video | `stabilized_videos_single_seed/<box>_<seed>.mp4` | automatic, for every germinated seed |
 | Tip coordinates | `tip_coordinates/<box>_<seed>.csv` | only after you confirm `y`/`c` at validation |
+| Quantification | `quantification/<box>_<seed>.csv` | when you run `code/quantify.ipynb` |
 | Archived experiments | `archive/` | when you run `util.archive()` (notebook cell) |
 
-> The coordinate CSV is written as **all `[x,y]` pairs on a single row** (`writerow(tip_coords_pcv)`),
-> not one row per frame — downstream analysis must parse that shape.
+## Quantification (`code/quantify.ipynb`)
+
+Run it after `track.ipynb`, in the same JupyterLab session. It turns each tip trace into a table —
+one row per frame — of **displacement from the root's own centerline**, circumnutation **peaks and
+period**, and **elongation** along the path (`arc_length_mm`, `del_arc_length_mm`), plus `x_mm`,
+`y_mm` and `growth_h`. The tables are for loading and analysing elsewhere; no plots are produced.
+
+```python
+quantify.quantify_dir(px_per_mm=28.6, interval_min=15)   # College Station rig, 15-minute cycle
+```
+
+**`px_per_mm` is a property of the rig** (camera, lens, working distance), so it must match the
+robot that took the images: 28.6 px/mm was measured on the College Station rig from the 76.2 mm box
+pitch. It belongs in that robot's `config.toml` and from there in every run's `run_config.json`,
+which the quantifier reads when it is present (along with `cycle_interval_min`); until capture
+records it, pass it explicitly. A missing scale is an error, never a guess.
+
+**Choosing `span`.** The centerline has to be smoother than the swing being measured. On synthetic
+roots of known 1.00 mm amplitude, the **period is recovered exactly at every span**, but amplitude is
+not: a slow swing (4 cycles over the trace) reads 0.15 mm at `span=0.1` — the centerline simply
+follows the root — and 0.97 mm at 0.3, while fast swings (20 cycles) are fine anywhere. Spans of 0.2
+and above overshoot by 10–15%. Start at 0.2 (0.5–0.6 when growth is slow, as the R did) and treat
+amplitude as good to ~15%, period as solid.
+
+Ported from the lab's original R analysis, kept in [`reference/r_analysis/`](reference/r_analysis/)
+for provenance, and **checked against it**: identical x/y, identical peak counts (34/33) and median
+period (2.250 h), amplitude correlated 0.975. Arc length deliberately differs — see that README, since
+**R-era arc-length numbers are not path length** and should be re-derived.
+
+The coordinate CSV is a JSON header line (box, seed, **germination frame**, curl frame, scale,
+imaging interval) followed by `frame,x,y` rows, so a trace can be placed in real time. Coordinates
+are pixels in the frame-0 reference, with per-seed jitter already removed.
+
+> Traces saved before 2026-09-18 are in the old format — every `[x,y]` pair on a **single row**, no
+> frame numbers — which `tipcsv.read_tip_csv()` still reads (treating time as frames since the trace
+> started, since the germination frame went unrecorded).
 
 ## How the container is built & updated
 
@@ -99,7 +134,7 @@ a code change is enough — no `Dockerfile` bump needed. Only `main` builds; tes
 
 - **Automatic germination detection** — the auto path in `Seed.germination_detection()` is a
   commented-out stub ("was not reliable"). Germination is manual until it's built.
-- **Downstream quantitative analysis + visualization** — the pipeline currently ends at raw tip
-  coordinates + trace videos. There is **no** growth-rate / gravitropic-angle / length-over-time
-  analysis or plotting here. Older **R analysis code was never ported** into this repo
-  (`max_intensity_projection` / `quantify_max_intensity_projection` are empty stubs).
+- **Visualization** — quantification is ported (see above), but the R's **plots are not**: no
+  amplitude-by-time / by-arc-length figures, period or elongation-rate plots, and no grouping of
+  boxes into treatments. The quantification tables are meant to be loaded and plotted elsewhere.
+  (`max_intensity_projection` / `quantify_max_intensity_projection` remain empty stubs.)
