@@ -18,7 +18,9 @@
 - Tip traces are written by `src/myutilities/tipcsv.py` (JSON header + `frame,x,y`); the old one-row
   format is still readable. `src/myutilities/quantify.py` turns a trace into per-frame measurements —
   a port of the R in `reference/r_analysis/`, which is a relic and must not be wired into anything.
-  `px_per_mm` is rig-specific: read it from the run manifest or take it as an argument, never hardcode.
+  `px_per_mm` is rig-specific: resolved by `quantify.resolve_run_settings()` (argument → trace header
+  → run_config.json → remembered `quantify_scale.json` → prompt), never hardcoded. With no scale the
+  columns are `_px` and time is `_frames`; never fabricate millimetres from an assumed scale.
 - `src/myutilities/plots.py` draws the per-root figures (displacement over time; path + centerline).
   Colours are the validated categorical slots (blue, orange) on a light surface, and text wears ink
   tokens, never the series colour. Always render and LOOK at a figure before calling it done.

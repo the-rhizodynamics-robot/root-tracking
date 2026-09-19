@@ -96,14 +96,21 @@ fitted centerline**, which is the QC check — if that line doesn't run down the
 raise `span` and re-run, because the displacement trace is only as good as the fit.
 
 ```python
-quantify.quantify_dir(px_per_mm=28.6, interval_min=15)   # College Station rig, 15-minute cycle
+quantify.quantify_dir()                                  # asks for the scale once, then remembers it
+quantify.quantify_dir(px_per_mm=28.6, interval_min=15)   # or state it and skip the prompts
 ```
 
 **`px_per_mm` is a property of the rig** (camera, lens, working distance), so it must match the
 robot that took the images: 28.6 px/mm was measured on the College Station rig from the 76.2 mm box
-pitch. It belongs in that robot's `config.toml` and from there in every run's `run_config.json`,
-which the quantifier reads when it is present (along with `cycle_interval_min`); until capture
-records it, pass it explicitly. A missing scale is an error, never a guess.
+pitch. It is resolved in this order — what you pass → the trace's own header → the run's
+`run_config.json` → what you entered last time (`quantify_scale.json`, saved beside the data) → a
+prompt offering that remembered value. So it is typed once per experiment, not once per run. Its
+proper home is each robot's `config.toml` and from there every run manifest.
+
+**Skipping is allowed, and honest.** Press Enter and measurements stay in **pixels**: the columns
+are named `amplitude_px`, `x_px` and so on, time is counted in **frames**, each output CSV opens
+with a `# units:` line, and the figures are labelled accordingly. Nothing is ever silently
+converted to millimetres with an assumed scale.
 
 **Choosing `span`.** The centerline has to be smoother than the swing being measured. On synthetic
 roots of known 1.00 mm amplitude, the **period is recovered exactly at every span**, but amplitude is

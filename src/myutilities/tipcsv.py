@@ -20,6 +20,7 @@ around the missing germination frame with a 10000 sentinel in the leading rows.
 
 FORMAT = "tip-coordinates/2"
 RUN_CONFIG_NAME = "run_config.json"
+SCALE_STORE = "quantify_scale.json" # what the operator entered last time, so they need not retype it
 SENTINELS = (10000, 100000) # R-era markers for "no data here" / "curl starts here"
 _INT = re.compile(r"-?\d+")
 
@@ -52,6 +53,39 @@ def scale_and_interval(run_config : dict):
     distance. Until then the quantifier takes it as a parameter.
     """
     return run_config.get("px_per_mm"), run_config.get("cycle_interval_min")
+
+def read_scale_store(*dirs):
+    """
+    The scale and cadence the operator entered last time, looked for in each directory given.
+
+    Returns ((px_per_mm, interval_min), path) or (None, None). Either value may be None -- an
+    operator who knows the scale but not the cadence should not have to invent one.
+    """
+    for d in dirs:
+        if not d: continue
+        path = os.path.join(d, SCALE_STORE)
+        if not os.path.isfile(path): continue
+        try:
+            with open(path, encoding="utf-8") as f: data = json.load(f)
+        except ValueError:
+            print(f"warning: {path} is not readable JSON; ignoring"); continue
+        scale, interval = data.get("px_per_mm"), data.get("interval_min")
+        if scale or interval: return (scale, interval), path
+    return None, None
+
+def write_scale_store(directory : str, px_per_mm=None, interval_min=None):
+    """
+    Remember the scale and cadence beside the data they describe, so the next run defaults to them.
+
+    A stand-in, not the real home: px_per_mm belongs in each robot's config.toml and from there in
+    every run_config.json, since it describes that rig's camera, lens and working distance.
+    """
+    path = os.path.join(directory, SCALE_STORE)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"px_per_mm": px_per_mm, "interval_min": interval_min,
+                   "note": "entered during quantification; the rig's run_config.json takes precedence"},
+                  f, indent=2)
+    return path
 
 def write_tip_csv(path : str, coords, box, seed_number : int, germination_frame : int,
                   curl_frame : int = None, source_dir : str = None):
