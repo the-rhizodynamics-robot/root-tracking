@@ -19,6 +19,9 @@
   format is still readable. `src/myutilities/quantify.py` turns a trace into per-frame measurements —
   a port of the R in `reference/r_analysis/`, which is a relic and must not be wired into anything.
   `px_per_mm` is rig-specific: read it from the run manifest or take it as an argument, never hardcode.
+- `src/myutilities/plots.py` draws the per-root figures (displacement over time; path + centerline).
+  Colours are the validated categorical slots (blue, orange) on a light surface, and text wears ink
+  tokens, never the series colour. Always render and LOOK at a figure before calling it done.
 - Frames are read on demand (`src/myutilities/frames.py`), never loaded whole: a 3000×3000 box is ~2.9 GB.
   Notebook images go through `util.show()` (one image at a time); don't add bare `plt.show()` calls.
 

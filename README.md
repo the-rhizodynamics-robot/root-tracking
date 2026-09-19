@@ -80,6 +80,7 @@ germination frames; tracing and video writing then take one pass over the frames
 | Per-seed trace video | `stabilized_videos_single_seed/<box>_<seed>.mp4` | automatic, for every germinated seed |
 | Tip coordinates | `tip_coordinates/<box>_<seed>.csv` | only after you confirm `y`/`c` at validation |
 | Quantification | `quantification/<box>_<seed>.csv` | when you run `code/quantify.ipynb` |
+| Figures | `plots/<box>_<seed>.png` | when you run `code/quantify.ipynb` |
 | Archived experiments | `archive/` | when you run `util.archive()` (notebook cell) |
 
 ## Quantification (`code/quantify.ipynb`)
@@ -87,7 +88,12 @@ germination frames; tracing and video writing then take one pass over the frames
 Run it after `track.ipynb`, in the same JupyterLab session. It turns each tip trace into a table —
 one row per frame — of **displacement from the root's own centerline**, circumnutation **peaks and
 period**, and **elongation** along the path (`arc_length_mm`, `del_arc_length_mm`), plus `x_mm`,
-`y_mm` and `growth_h`. The tables are for loading and analysing elsewhere; no plots are produced.
+`y_mm`, `centerline_x_mm` and `growth_h`. The tables are meant to be loaded and analysed elsewhere.
+
+It also draws **two figures per root** into `results/plots/<box>_<seed>.png`: **tip displacement
+over time** (mm against hours, the figure this work is read from) and the **root path with its
+fitted centerline**, which is the QC check — if that line doesn't run down the middle of the root,
+raise `span` and re-run, because the displacement trace is only as good as the fit.
 
 ```python
 quantify.quantify_dir(px_per_mm=28.6, interval_min=15)   # College Station rig, 15-minute cycle
@@ -134,7 +140,8 @@ a code change is enough — no `Dockerfile` bump needed. Only `main` builds; tes
 
 - **Automatic germination detection** — the auto path in `Seed.germination_detection()` is a
   commented-out stub ("was not reliable"). Germination is manual until it's built.
-- **Visualization** — quantification is ported (see above), but the R's **plots are not**: no
-  amplitude-by-time / by-arc-length figures, period or elongation-rate plots, and no grouping of
-  boxes into treatments. The quantification tables are meant to be loaded and plotted elsewhere.
+- **Cross-root figures** — the per-root plots are ported (displacement over time, path with
+  centerline), but the R's **aggregates are not**: amplitude by time and by arc length, arc length
+  by time, elongation rate by time, period by time. Each overlays many roots grouped by treatment,
+  and this pipeline has no box-to-condition mapping yet.
   (`max_intensity_projection` / `quantify_max_intensity_projection` remain empty stubs.)

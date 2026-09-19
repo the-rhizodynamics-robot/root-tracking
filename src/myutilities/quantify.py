@@ -110,6 +110,7 @@ def quantify_trace(frames, x, y, px_per_mm : float, interval_min : float, box=No
     amplitude = distance_from_centerline(x, y, predict, offsets) * mm
 
     cx = predict(y) # the centerline itself is the path length reference; the tip's own wobble is the amplitude
+    centerline_mm = (cx - x[0]) * mm # kept as a column so plots and QC need not refit it
     step = np.hypot(np.diff(cx), np.diff(y)) * mm # NOT the R's expression, which reduces to |dx - dy|
     del_arc = np.concatenate([[0.0], step])
     arc = np.nancumsum(del_arc)
@@ -124,6 +125,7 @@ def quantify_trace(frames, x, y, px_per_mm : float, interval_min : float, box=No
         "is_max": False, "is_min": False, "period_h": np.nan,
         "x_mm": (x - x[0]) * mm,
         "y_mm": (y - y[0]) * mm,
+        "centerline_x_mm": centerline_mm,
         "arc_length_mm": arc,
         "del_arc_length_mm": del_arc,
         "box": box, "seed": seed,

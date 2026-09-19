@@ -49,4 +49,10 @@ plotting file needs it) and calling `quant_looper("/in", 1, <stop>, 1/28.6, 100)
 - **Fixed on the way:** box and seed were parsed from the literal `"2461_1"` rather than the
   filename; `dist` was not reset between offsets, so an `NA` prediction reused the previous value;
   and the "root stopped growing" branch relied on an assignment inside a `tryCatch` that never fired.
-- **Plots are not ported.** The pipeline writes tables meant to be loaded and analysed elsewhere.
+- **The per-root plots are ported** (`src/myutilities/plots.py`): displacement over time, and the
+  path with its centerline. The **cross-root aggregates in `plotting_functions.R` are not** —
+  amplitude by time and by arc length, arc length by time, elongation rate by time, period by time.
+  Those exist to compare treatment groups, which the R declared by slicing a file list
+  (`files[c(1:7)]`); that needs a box-to-condition mapping, which this pipeline does not yet have.
+  They were never fully fleshed out, so `plotting_functions.R` is kept here as the **reference for a
+  future re-implementation** rather than as something to port line by line.
