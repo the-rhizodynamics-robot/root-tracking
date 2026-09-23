@@ -21,6 +21,9 @@
   `px_per_mm` is rig-specific: resolved by `quantify.resolve_run_settings()` (argument → trace header
   → run_config.json → remembered `quantify_scale.json` → prompt), never hardcoded. With no scale the
   columns are `_px` and time is `_frames`; never fabricate millimetres from an assumed scale.
+- The germination view is WIDER than the seed box (`view_margin`/`view_margin_bottom`) so the root's
+  emergence point is visible. Its crop→frame conversion (`germination_x = locs[i][1] + vx1`) must use
+  the VIEW origin, not `self.x1`: an origin mismatch offsets every later tracking crop silently.
 - `src/myutilities/plots.py` draws the per-root figures (displacement over time; path + centerline).
   Colours are the validated categorical slots (blue, orange) on a light surface, and text wears ink
   tokens, never the series colour. Always render and LOOK at a figure before calling it done.

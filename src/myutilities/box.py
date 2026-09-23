@@ -239,12 +239,14 @@ class Box:
          
 
 
-    def germination_detection(self, save_tip_sample : bool = False,  threshold_multiplier : float = 1.5, save_path : str = None, automatic : bool = True):
+    def germination_detection(self, save_tip_sample : bool = False,  threshold_multiplier : float = 1.5, save_path : str = None, automatic : bool = True,
+                              view_margin : int = 40, view_margin_bottom : int = 150):
         count = 1
         if save_path is None:
             save_path = self._save_path
         for seed in self.seeds:
-            seed.germination_detection(self.images, count, save_path, threshold_multiplier = threshold_multiplier, automatic = automatic)
+            seed.germination_detection(self.images, count, save_path, threshold_multiplier = threshold_multiplier, automatic = automatic,
+                                       view_margin = view_margin, view_margin_bottom = view_margin_bottom)
             count += 1
 
     def start_registration(self, bottom_trim : int = 100, search_margin : int = 200):
@@ -479,7 +481,18 @@ class Seed(Image):
         else:
             raise ValueError("Set germination frame to int above 0")
 
-    def germination_detection(self, images, seed_number,  save_path : str, threshold_multiplier : float = 1.5, save_tip_sample: bool = False, automatic : bool = True):
+    def germination_detection(self, images, seed_number,  save_path : str, threshold_multiplier : float = 1.5, save_tip_sample: bool = False, automatic : bool = True,
+                              view_margin : int = 40, view_margin_bottom : int = 150):
+        """
+        Find the germination frame and the point the root leaves the seed, by bisection.
+
+        view_margin / view_margin_bottom widen the crop shown (and searched for tip candidates)
+        beyond init_seeds' padding: the germination point sits where the root emerges, which falls
+        outside that padding often enough to leave the operator picking a point they cannot see.
+        Sideways is kept modest -- seeds sit ~300 px apart and the padded box is already ~340 px, so
+        a wide view pulls in the neighbouring seed's root and offers its tips as candidates. The
+        room that matters is below, where the root grows.
+        """
         if automatic:
             pass
             # NEED TO DEVELOP THIS. WAS NOT RELIABLE, AND WON'T RUN AS CURRENTLY WRITTEN.
@@ -495,11 +508,14 @@ class Seed(Image):
             #     io.save_image(io.to_pil(image), save_path + f"/germination_seed{seed_number}.png")
         else:
             print("Finding germination frame for seed " + str(seed_number))
+            h, w = images[0].shape # clamped: a seed near a frame edge would otherwise crop past it
+            vx1, vx2 = max(self.x1 - view_margin, 0), min(self.x2 + view_margin, w)
+            vy1, vy2 = max(self.y1 - view_margin, 0), min(self.y2 + view_margin_bottom, h)
             first = 0
             last = len(images) - 1
             while True:
                 mid = int((first + last)/2)
-                util.show(images[mid][self.y1:self.y2, self.x1:self.x2], f"box {self.qr_number} · seed {seed_number} · germination search · frame {mid}/{len(images) - 1}")
+                util.show(images[mid][vy1:vy2, vx1:vx2], f"box {self.qr_number} · seed {seed_number} · germination search · frame {mid}/{len(images) - 1}")
                 while True:
                     direction = input("Is germination (b)efore, (a)fter, (h)ere, do you need to (r)estart, or does it not germinate (x)?")
                     if direction == "b" or direction == "a" or direction == "h" or direction == "r" or direction == "x":
@@ -525,7 +541,7 @@ class Seed(Image):
                     last = mid
                 
             if self.germination_indicator:                    
-                proposed = np.copy(images[self._tracking_start_frame][self.y1:self.y2, self.x1:self.x2])
+                proposed = np.copy(images[self._tracking_start_frame][vy1:vy2, vx1:vx2])
                 threshold_light = pcv.threshold.binary(gray_img=proposed, threshold=np.median(images[mid])*threshold_multiplier , max_value=255, object_type='light')
                 binary_img = pcv.median_blur(gray_img=threshold_light, ksize=5)
                 fill_image = pcv.fill(bin_img=binary_img, size=10)
@@ -551,8 +567,10 @@ class Seed(Image):
                     if response == "y":
                         response = input("Confirm germination is here by pressing (y), any other key to keep searching.")
                         if response == "y":
-                            self.germination_x = locs[i][1] + self.x1
-                            self.germination_y = locs[i][0] + self.y1
+                            # crop -> frame coordinates, from the VIEW origin, not the seed box:
+                            # tracking starts here, so an origin mismatch offsets every later crop
+                            self.germination_x = locs[i][1] + vx1
+                            self.germination_y = locs[i][0] + vy1
                             break
                     if i == 0:
                         while True:
