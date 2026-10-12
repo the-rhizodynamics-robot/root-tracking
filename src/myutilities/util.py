@@ -2,6 +2,8 @@ import subprocess
 import shutil
 import time
 import os
+from IPython.display import clear_output
+from matplotlib import pyplot as plt
 
 """
 General purpose utility module for convenience functions
@@ -14,6 +16,16 @@ def listdir_nohidden(path):
     :return: list of files within directory excluding any hidden files starting with .
     """
     return [f for f in sorted(os.listdir(path)) if not f.startswith('.')]
+
+def show(img, status: str = None):
+    """
+    Replace the cell's output with ONE image, optionally headed by a status line, instead of
+    stacking every image down the notebook. 2-D (grayscale) arrays are drawn in gray; matplotlib's
+    default colormap would false-colour them.
+    """
+    clear_output(wait=True) # wait=True keeps the old image up until the new output arrives: no flicker
+    if status: print(status)
+    plt.imshow(img, cmap="gray"); plt.show()
 
 def archive():
     """Function to clear out pre_quantification_stabilized directory and move experiment folders to pre_quantificaiton archive. Need to build in a way to clear

@@ -130,10 +130,7 @@ class SeedModel(Model):
         else:
             mi = Image(cv2.imread(image_path))
 
-        # TODO change width to zero
-        height = [500 / 3000, 2000 / 3000]  # proportion of cropped height
-        width = [1 / 6, 5 / 6]  # proportion of cropped width
-        height = [0, 1]
+        height = [0, 1] # full frame: callers restrict the search area themselves (see Box.init_seeds)
         width = [0, 1]
 
         mi.set_crop(int(width[0] * np.shape(mi.image)[1]),
@@ -197,8 +194,11 @@ class SeedModel(Model):
             io.save_image_from_array(draw, image_output_path)
             print("processing time: " + image_output_path)
 
-        if sort:
-            seed_images.sort(key=lambda i:i.x1)
+        if sort: # sort BOTH together: scores_list used to stay in score order while seed_images moved,
+            # so a caller picking "the top N scores" indexed the wrong boxes
+            order = sorted(range(len(seed_images)), key=lambda i: seed_images[i].x1)
+            seed_images = [seed_images[i] for i in order]
+            scores_list = [scores_list[i] for i in order]
 
         return seed_images, scores_list
 
