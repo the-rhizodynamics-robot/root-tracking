@@ -56,7 +56,13 @@ For each box you say `y` to, the notebook runs:
    switches to manual grid entry.
 2. **Germination detection** — **manual** by design: an interactive bisection over the series
    (*"Is germination (b)efore / (a)fter / (h)ere / (r)estart / (x) none"*) pins the germination
-   frame per seed. *(Automatic germination is an unfinished stub — see [Not yet implemented].)*
+   frame per seed, after which you pick the point where the root leaves the seed. That view is
+   deliberately **wider than the seed box** — `germination_view_margin` (40 px, sides and top) and
+   `germination_view_margin_bottom` (150 px), clamped to the frame — because the emergence point
+   often falls outside the detection box's padding and cannot be picked if it is off-view. Widen
+   further if you hit that, but sparingly sideways: seeds sit ~300 px apart, so a wide view pulls in
+   the neighbouring seed's root and offers its tips as candidates.
+   *(Automatic germination is an unfinished stub — see [Not yet implemented].)*
 3. **Tip tracing** — PlantCV skeletonizes each frame and follows the tip from the germination
    frame; also **auto-writes a per-seed trace video**.
 4. **Validation / save** — shows the final trace image; on `y` it saves the tip coordinates

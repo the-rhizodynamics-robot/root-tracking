@@ -15,6 +15,8 @@ results_dir = '/app/results'
 def seed_localization_and_tip_tracking(
     data_path,
     germination_threshold_multiplier=1.5,
+    germination_view_margin=40,
+    germination_view_margin_bottom=150,
     tip_trace_length=384,
     tip_trace_threshold_multiplier=1.5,
     tip_trace_bound_radius=30,
@@ -74,7 +76,9 @@ def seed_localization_and_tip_tracking(
             b.germination_detection(
                 save_tip_sample=save_tip_sample,
                 threshold_multiplier=germination_threshold_multiplier,
-                automatic=False
+                automatic=False,
+                view_margin=germination_view_margin,             # room around the seed box, so the
+                view_margin_bottom=germination_view_margin_bottom # emergence point is never off-view
             )
             b.tip_trace_pcv(
                 length=tip_trace_length,
