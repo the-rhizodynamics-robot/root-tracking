@@ -79,6 +79,22 @@ are shown with the trace at validation.
 needs a few hundred MB instead of ~2.9 GB. Per-seed registration runs in the background while you pick
 germination frames; tracing and video writing then take one pass over the frames each, per box.
 
+## Stabilization: QR label first, then each seed
+
+Every frame is shifted onto the box's **QR-stabilized** position as it is read, before seeds are
+detected (`src/myutilities/stabilization.py`, `frames.py`). The shifts come from the
+`stabilization.json` that file-sorting writes beside each finished box's frames. A box without one
+(finished before 2026-10-14, or unspooled from a video) is measured here with the same code
+(`qr_stabilize.py`, a copy of file-sorting's; keep the two in sync), and the result is saved beside
+the frames. A box that was nudged during the experiment is followed too, because the label is on the box.
+
+Each seed is then registered to itself (`Seed.register_to_seed`), but on aligned frames that only
+has to find a few px. It searches ±40 px, widening to at most ±200 so it can never reach a
+neighbouring seed (~300 px away). A seed that sits more than 15 px from its usual place is
+reported as possibly having moved itself, e.g. floating, or the ~9 % of a box nudge that the
+camera parallax factor leaves. Measured on boxes 14 and 15: residual seed motion of 1–5 px max.
+`prestabilize=False` in `seed_localization_and_tip_tracking()` restores the old behaviour.
+
 ## Outputs (under `--results_dir`)
 
 | Output | Path | When |
@@ -132,7 +148,9 @@ period (2.250 h), amplitude correlated 0.975. Arc length deliberately differs �
 
 The coordinate CSV is a JSON header line (box, seed, **germination frame**, curl frame, scale,
 imaging interval) followed by `frame,x,y` rows, so a trace can be placed in real time. Coordinates
-are pixels in the frame-0 reference, with per-seed jitter already removed.
+are pixels in the **QR-stabilized frame** (the box's median position, see below), with the per-seed
+residual removed; the header's `frame_space` says how the frames were stabilized. Traces made before
+2026-10-14 are in the frame-0 reference of the unstabilized frames.
 
 > Traces saved before 2026-09-18 are in the old format — every `[x,y]` pair on a **single row**, no
 > frame numbers — which `tipcsv.read_tip_csv()` still reads (treating time as frames since the trace

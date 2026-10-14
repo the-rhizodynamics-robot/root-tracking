@@ -25,12 +25,21 @@ def read_gray(path: str) -> np.ndarray:
     if img is None: raise ValueError(f"could not read {path} as an image") # corrupt/truncated frame: fail loudly, naming the file
     return img
 
+def shifted(img: np.ndarray, dx: float, dy: float) -> np.ndarray:
+    """img moved back by (dx, dy): translation only, sub-pixel, same size; the uncovered edge is black."""
+    if not dx and not dy: return img
+    return cv2.warpAffine(img, np.float32([[1, 0, -dx], [0, 1, -dy]]), (img.shape[1], img.shape[0]), flags=cv2.INTER_LINEAR)
+
 class Frames:
     """Sequence of grayscale frames, read from disk on demand. Supports len(), indexing, slicing,
-    plain iteration, and iter(start, stop) for prefetched sequential passes."""
+    plain iteration, and iter(start, stop) for prefetched sequential passes.
 
-    def __init__(self, paths: list, cache_size: int = 12, workers: int = 4, lookahead: int = 8):
+    shifts: optional (dx, dy) per frame (stabilization.py). Each frame is moved back by its shift as
+    it is read, so everything downstream sees the QR-stabilized series; None = frames as on disk."""
+
+    def __init__(self, paths: list, cache_size: int = 12, workers: int = 4, lookahead: int = 8, shifts: list = None):
         self.paths = list(paths)
+        self.shifts = list(shifts) if shifts is not None else None
         self.cache_size, self.workers, self.lookahead = cache_size, workers, lookahead # cache: ~110 MB at 3000x3000
         self._cache = collections.OrderedDict() # LRU: frame index -> read-only array
         self._lock = threading.Lock() # background registration and the foreground UI read concurrently
@@ -39,12 +48,13 @@ class Frames:
         return len(self.paths)
 
     def __getitem__(self, i):
-        if isinstance(i, slice): return Frames(self.paths[i], self.cache_size, self.workers, self.lookahead)
+        if isinstance(i, slice): return Frames(self.paths[i], self.cache_size, self.workers, self.lookahead,
+                                              self.shifts[i] if self.shifts is not None else None)
         i = range(len(self.paths))[i] # normalises negative indices; raises IndexError like a list
         with self._lock:
             if i in self._cache:
                 self._cache.move_to_end(i); return self._cache[i]
-        img = read_gray(self.paths[i])
+        img = self._read(i)
         img.setflags(write=False) # cached arrays are shared: an in-place edit would silently corrupt later reads
         with self._lock:
             self._cache[i] = img
@@ -58,11 +68,15 @@ class Frames:
         with concurrent.futures.ThreadPoolExecutor(self.workers) as ex:
             pending = collections.deque()
             for i in range(start, stop):
-                pending.append((i, ex.submit(read_gray, self.paths[i])))
+                pending.append((i, ex.submit(self._read, i)))
                 if len(pending) > self.lookahead:
                     j, fut = pending.popleft(); yield j, fut.result()
             while pending:
                 j, fut = pending.popleft(); yield j, fut.result()
+
+    def _read(self, i):
+        img = read_gray(self.paths[i])
+        return shifted(img, *self.shifts[i]) if self.shifts is not None else img
 
     def __iter__(self):
         return (img for _, img in self.iter())

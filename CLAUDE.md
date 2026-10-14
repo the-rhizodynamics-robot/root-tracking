@@ -24,6 +24,12 @@
 - The germination view is WIDER than the seed box (`view_margin`/`view_margin_bottom`) so the root's
   emergence point is visible. Its crop→frame conversion (`germination_x = locs[i][1] + vx1`) must use
   the VIEW origin, not `self.x1`: an origin mismatch offsets every later tracking crop silently.
+- Frames are QR-stabilized on read (`stabilization.py` → `Frames(shifts=...)`) from file-sorting's
+  `stabilization.json` (format `qr-stabilization/1`, keyed by frame filename), else measured with
+  `qr_stabilize.py`, a vendored copy of file-sorting's `bin/src/qr_stabilize.py`: keep them in sync.
+  Seed registration then only finds the residual (±40 px, capped at ±200 so it can't jump to a
+  neighbouring seed). `_locate_seed` must pick the blob overlapping the detection box, never the
+  largest: seeds under the lid otherwise latch onto its rim.
 - `src/myutilities/plots.py` draws the per-root figures (displacement over time; path + centerline).
   Colours are the validated categorical slots (blue, orange) on a light surface, and text wears ink
   tokens, never the series colour. Always render and LOOK at a figure before calling it done.

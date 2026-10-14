@@ -4,6 +4,7 @@ import time
 from src.myutilities import util
 from src.myutilities import tipcsv
 from src.myutilities.frames import Frames, iter_frames
+from src.myutilities import stabilization
 import src.myutilities.io as io
 import numpy as np
 import src.retnet.model as retnet
@@ -55,7 +56,7 @@ class Box:
     # The box's frames: a Frames (frames.py), read from disk on demand rather than held in memory.
     images = []
     
-    def __init__(self, path, save_path = "/app/data/"):
+    def __init__(self, path, save_path = "/app/data/", prestabilize : bool = True):
         """
         Attributes
         ----------
@@ -69,7 +70,9 @@ class Box:
         my_list : list
             list of paths to all image files associated with this experiment
         images : Frames
-            the image series, read from disk on demand (frames.py)
+            the image series, read from disk on demand (frames.py) -- QR-stabilized when prestabilize
+        frame_space : dict
+            how the frames were stabilized (stabilization.py), recorded in every tip CSV
         seeds : list
             list of seed objects within the box
         """
@@ -79,8 +82,10 @@ class Box:
         my_list = [f for f in util.listdir_nohidden(self._path)
                    if os.path.splitext(f)[1].lower() in IMAGE_EXTENSIONS] # cv2 returns None for non-images, which only surfaces much later as a cryptic TypeError deep in tracking
         if not my_list: raise ValueError(f"no image files in {self._path}")
-        self.images = Frames([os.path.join(self._path, l) for l in my_list]) # read on demand: a few hundred MB instead of ~2.9 GB per box; a corrupt frame raises, naming the file, when first read
-        print(f"box {self._qr_number}: {len(self.images)} frames (read on demand)")
+        shifts, self.frame_space = stabilization.frame_shifts(self._path, my_list) if prestabilize else (None, {"method": "none", "reason": "prestabilize=False"})
+        self.images = Frames([os.path.join(self._path, l) for l in my_list], shifts = shifts) # read on demand: a few hundred MB instead of ~2.9 GB per box; a corrupt frame raises, naming the file, when first read
+        print(f"box {self._qr_number}: {len(self.images)} frames (read on demand)" +
+              (f", QR-stabilized ({self.frame_space['source']}, parallax {self.frame_space['parallax']})" if shifts is not None else ", NOT stabilized"))
         self.seeds = [] # Seed objects
         self._reg_thread, self._reg_error = None, None # background seed registration, see start_registration()
     
@@ -249,16 +254,20 @@ class Box:
                                        view_margin = view_margin, view_margin_bottom = view_margin_bottom)
             count += 1
 
-    def start_registration(self, bottom_trim : int = 100, search_margin : int = 200):
+    def start_registration(self, bottom_trim : int = 100, search_margin : int = None):
         """
         Register every seed (Seed.register_to_seed) on a background thread. Registration needs only the
         seed boxes, not the germination frames, so its passes over the frames run while the user is
         still bisecting for germination. Its messages go to each seed's log, shown at validation.
         """
         if self._reg_thread is not None: return
+        stabilized = self.images.shifts is not None
+        if search_margin is None: search_margin = 40 if stabilized else 200 # QR-stabilized: only a few px are left to find
+        widest = 200 if stabilized else 900 # stabilized: a seed ~300 px away must stay out of reach; 200 still covers ~9 % of a 75 mm nudge
         def run():
             try:
-                for seed in self.seeds: seed.register_to_seed(self.images, bottom_trim = bottom_trim, search_margin = search_margin)
+                for seed in self.seeds: seed.register_to_seed(self.images, bottom_trim = bottom_trim, search_margin = search_margin,
+                                                              max_search_margin = max(widest, search_margin))
             except Exception as e: self._reg_error = e # re-raised in the foreground by wait_registration()
         self._reg_thread = threading.Thread(target = run, daemon = True)
         self._reg_thread.start()
@@ -270,7 +279,7 @@ class Box:
         if self._reg_error is not None: raise self._reg_error
 
     def tip_trace_pcv(self, length : int = None, threshold_multiplier : float = 1.5, bound_radius : int = 30,
-                      stabilize : bool = True, stabilize_bottom_trim : int = 100, stabilize_search_margin : int = 200):
+                      stabilize : bool = True, stabilize_bottom_trim : int = 100, stabilize_search_margin : int = None):
         """
         Trace every germinated seed in ONE shared pass over the frames, then write all their videos in a
         second shared pass: two passes per box however many seeds, since frames are read from disk.
@@ -397,7 +406,7 @@ class Box:
                     print("Saving coordinates.")
                     meta = tipcsv.write_tip_csv(f"/app/results/tip_coordinates/{self._qr_number}_{count}.csv",
                                                 s.tip_coords_pcv, self._qr_number, count, s.germination_frame,
-                                                source_dir = self._path)
+                                                source_dir = self._path, frame_space = self.frame_space)
                     print(f"  {meta['frames']} frames from germination frame {meta['germination_frame']}")
                 elif save1 =="c":
                     first = 0
@@ -439,7 +448,7 @@ class Box:
                     print("Saving coordinates.")
                     meta = tipcsv.write_tip_csv(f"/app/results/tip_coordinates/{self._qr_number}_{count}.csv",
                                                 s.tip_coords_pcv, self._qr_number, count, s.germination_frame,
-                                                curl_frame = s.curling_start_frame, source_dir = self._path)
+                                                curl_frame = s.curling_start_frame, source_dir = self._path, frame_space = self.frame_space)
                     print(f"  {meta['frames']} frames, truncated at curl frame {meta['curl_frame']}") # the frame is in the header now, not a 100000 sentinel row
                     
 
@@ -608,7 +617,14 @@ class Seed(Image):
         bw = cv2.morphologyEx(bw, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (31, 31))) # erase the thin root, keep the fat seed
         n, lab, stats, _ = cv2.connectedComponentsWithStats(bw, 8)
         if n <= 1: return None, None, None, None
-        i = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+        # The blob that overlaps the detection box most -- NOT the largest in the padded region: seeds
+        # hung just under the lid had the lid's bright rim in that region, and a 551x95 px strip of rim
+        # matches equally well anywhere along it, so offsets slid by hundreds of px (2026-10-14).
+        ox1, oy1, ox2, oy2 = bx1 - rx1, by1 - ry1, bx2 - rx1, by2 - ry1 # detection box in region coordinates
+        overlap = [max(0, min(sx + sw, ox2) - max(sx, ox1)) * max(0, min(sy + sh, oy2) - max(sy, oy1))
+                   for sx, sy, sw, sh, _ in stats[1:]]
+        if max(overlap) == 0: return None, None, None, None
+        i = 1 + int(np.argmax(overlap))
         sx, sy, sw, sh, area = stats[i]
         if not (0.005 * reg.size < area < 0.5 * reg.size): return None, None, None, None # blown threshold, not a seed
         return (max(rx1 + sx - margin, 0),        max(ry1 + sy - margin, 0),
@@ -618,8 +634,10 @@ class Seed(Image):
                          min_score : float = 0.5, max_weak_frac : float = 0.25,
                          max_search_margin : int = 900):
         """
-        Measure this seed's per-frame (dx, dy) shift relative to frame 0 by template-matching
-        on the seed body, so tracking and video can undo residual gantry jitter locally.
+        Measure this seed's per-frame (dx, dy) shift, relative to its median position, by
+        template-matching on the seed body, so tracking and video can undo residual jitter locally.
+        On QR-stabilized frames (the default) that residual is a few px plus any motion of the
+        seed itself, which is reported.
 
         Upstream file-sorting stabilizes the WHOLE frame with one transform, which leaves
         residual error that grows toward the frame edges and differs per seed. The seed itself
@@ -696,6 +714,10 @@ class Seed(Image):
         worst = min(o[2] for o in self.offsets)
         self.log.append(f"registration: jitter dx {min(dx)}..{max(dx)} px, dy {min(dy)}..{max(dy)} px "
                         f"(seed template {tx2-tx1}x{ty2-ty1} at {tx1},{ty1}, worst match {worst:.2f}, {weak}/{len(images)} frames rejected)")
+        if getattr(images, "shifts", None) is not None: # frames already QR-stabilized: what's left is the seed's own motion
+            far = [i for i, o in enumerate(self.offsets) if max(abs(o[0]), abs(o[1])) > 15]
+            if far: self.log.append(f"registration: seed {self.seed_number} sits up to {max(max(abs(o[0]), abs(o[1])) for o in self.offsets)} px "
+                                    f"from its usual place on stabilized frames (first over 15 px: frame {far[0]}) -- the seed itself may have moved")
         if weak > len(images) * max_weak_frac: # registration is unreliable for this seed; unstabilized beats mis-stabilized
             self.log.append(f"registration FAILED ({weak}/{len(images)} frames) -- stabilization DISABLED for this seed. "
                             f"If the jitter range reaches +/-{search_margin}, the real jitter exceeds the search window: raise stabilize_search_margin")

@@ -88,7 +88,7 @@ def write_scale_store(directory : str, px_per_mm=None, interval_min=None):
     return path
 
 def write_tip_csv(path : str, coords, box, seed_number : int, germination_frame : int,
-                  curl_frame : int = None, source_dir : str = None):
+                  curl_frame : int = None, source_dir : str = None, frame_space : dict = None):
     """
     Write one seed's tip trace: a JSON header line, then frame,x,y rows.
 
@@ -102,7 +102,10 @@ def write_tip_csv(path : str, coords, box, seed_number : int, germination_frame 
     meta = {"format": FORMAT, "box": str(box), "seed": int(seed_number),
             "germination_frame": int(germination_frame), "curl_frame": curl_frame,
             "frames": len(rows), "px_per_mm": px_per_mm, "interval_min": interval_min,
-            "coordinates": "pixels, frame-0 referenced (per-seed jitter removed)"}
+            "coordinates": ("pixels in the QR-stabilized frame (the box's median position), per-seed residual removed"
+                            if frame_space and frame_space.get("method") == "qr-label"
+                            else "pixels, frame-0 referenced (per-seed jitter removed)"),
+            "frame_space": frame_space}
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", newline="") as f:
         f.write("# " + json.dumps(meta) + "\n")

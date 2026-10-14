@@ -28,7 +28,8 @@ def seed_localization_and_tip_tracking(
     seed_max_overlap=0.3,
     stabilize=True,
     stabilize_bottom_trim=100,
-    stabilize_search_margin=200
+    stabilize_search_margin=None,
+    prestabilize=True
 ):
     """
     Function to localize seeds and track root tips with specified parameters.
@@ -50,7 +51,10 @@ def seed_localization_and_tip_tracking(
     - stabilize (bool): Register each seed to frame 0 to remove residual gantry jitter locally.
     - stabilize_bottom_trim (int): Px trimmed off the bottom of the seed box (the root-growth region)
       before it is used as the registration template.
-    - stabilize_search_margin (int): Px searched around the seed box; must exceed the worst jitter.
+    - stabilize_search_margin (int): Px searched around the seed box first (widened automatically).
+      None = 40 on QR-stabilized frames, 200 otherwise.
+    - prestabilize (bool): Shift every frame onto the box's QR-stabilized position first, from the
+      stabilization.json file-sorting writes beside the frames (measured here if it is missing).
     """
     box_list = util.listdir_nohidden(data_path)
 
@@ -65,7 +69,7 @@ def seed_localization_and_tip_tracking(
                 print("Invalid character")
         if track == "y":
             box_path = os.path.join(data_path, expt)
-            b = box.Box(box_path)
+            b = box.Box(box_path, prestabilize=prestabilize)
             b.init_seeds(seed_model_obj, automatic=automatic, seed_confidence=seed_confidence,
                          search_x=seed_search_x, search_y=seed_search_y,
                          max_overlap=seed_max_overlap)   # proposes the N best in the band, N = the count you enter
