@@ -95,6 +95,13 @@ reported as possibly having moved itself, e.g. floating, or the ~9 % of a box nu
 camera parallax factor leaves. Measured on boxes 14 and 15: residual seed motion of 1–5 px max.
 `prestabilize=False` in `seed_localization_and_tip_tracking()` restores the old behaviour.
 
+**Cleaner trace videos.** Plastic reflections are faded out of the per-seed trace videos (display
+only, never the frames the tracker measures). Away from the seed and its traced root, a pixel is
+removed up to background + 10 and kept above background + 30, relative to each frame's own
+background. Inside a 25 px band around the seed and the root traced so far, the cut is only at
+background + 3..12. A faint root tip, or a root already there at frame 0, is protected by the trace
+itself, not by its brightness. `tip_trace_pcv(clean_video=False)` turns it off.
+
 ## Outputs (under `--results_dir`)
 
 | Output | Path | When |

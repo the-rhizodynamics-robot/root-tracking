@@ -279,7 +279,8 @@ class Box:
         if self._reg_error is not None: raise self._reg_error
 
     def tip_trace_pcv(self, length : int = None, threshold_multiplier : float = 1.5, bound_radius : int = 30,
-                      stabilize : bool = True, stabilize_bottom_trim : int = 100, stabilize_search_margin : int = None):
+                      stabilize : bool = True, stabilize_bottom_trim : int = 100, stabilize_search_margin : int = None,
+                      clean_video : bool = True):
         """
         Trace every germinated seed in ONE shared pass over the frames, then write all their videos in a
         second shared pass: two passes per box however many seeds, since frames are read from disk.
@@ -296,7 +297,7 @@ class Box:
         for s in seeds: s.trace_end()
         print(f"box {self._qr_number}: writing {len(seeds)} video(s) ...")
         shape = self.images[0].shape
-        spans = {s: s.video_start(f"{out}/{self._qr_number}_{self.seeds.index(s) + 1}.mp4", shape) for s in seeds} # numbered by position among ALL seeds, as before
+        spans = {s: s.video_start(f"{out}/{self._qr_number}_{self.seeds.index(s) + 1}.mp4", shape, clean = clean_video) for s in seeds} # numbered by position among ALL seeds, as before
         self._shared_pass(spans, lambda s, fi, frame: s.video_frame(fi, frame))
         for s in seeds: s.video_end()
 
@@ -779,7 +780,7 @@ class Seed(Image):
         for fi, frame in iter_frames(images_param, start, stop): self.trace_frame(fi, frame)
         self.trace_end()
         
-    def video_start(self, path : str, frame_shape : tuple):
+    def video_start(self, path : str, frame_shape : tuple, clean : bool = True):
         """
         Fix the video crop (the seed box plus the whole tip path) and prepare the writer. Feed frames to
         video_frame() in order over the returned (start, stop) span, then call video_end(). Frames are
@@ -799,7 +800,7 @@ class Seed(Image):
         x1, y1 = max(int(x1), 0), max(int(y1), 0) # clamp INTO the frame (x2/y2 were clamped to 0, not fw/fh)
         x2, y2 = min(int(x2), fw), min(int(y2), fh)
         cw, ch = (x2 - x1) & ~1, (y2 - y1) & ~1 # constant size so every frame matches; even, because mp4v mangles odd dimensions
-        self._video = {"path": path, "x1": x1, "y1": y1, "cw": cw, "ch": ch, "fw": fw, "fh": fh, "writer": None}
+        self._video = {"path": path, "x1": x1, "y1": y1, "cw": cw, "ch": ch, "fw": fw, "fh": fh, "writer": None, "clean": clean}
         self.final_trace_img = None
         return self._tracking_start_frame, self._tracking_start_frame + len(self.tip_coords_pcv) - 1
 
@@ -826,6 +827,9 @@ class Seed(Image):
         original = original[cy1:cy1 + v["ch"], cx1:cx1 + v["cw"]]
         frame = frame[cy1:cy1 + v["ch"], cx1:cx1 + v["cw"]]
         black = black[cy1:cy1 + v["ch"], cx1:cx1 + v["cw"]]
+        if v["clean"]: # display only: tracking never sees these pixels
+            keep = self._video_keep(original, x, dx - cx1, dy - cy1)
+            original, frame = self._suppress_faint(original, keep), self._suppress_faint(frame, keep)
         # cv2_videoWriter BGR color requirement
         buffer = np.full(np.shape(original), 255, dtype=np.uint8)[:,1:3]
         buffer = cv2.cvtColor(buffer, cv2.COLOR_GRAY2BGR)
@@ -837,6 +841,30 @@ class Seed(Image):
             v["writer"] = cv2.VideoWriter(v["path"], cv2.VideoWriter_fourcc(*'mp4v'), 15, (complete.shape[1], complete.shape[0]))
         v["writer"].write(complete)
         self.final_trace_img = complete # the last frame is shown for QC at validation
+
+    def _video_keep(self, crop, x : int, ox : int, oy : int, margin : int = 25):
+        """Mask (crop coordinates) of what the video must never alter: this seed's box and the root
+        traced so far (frames 0..x), widened by `margin` px. Built from the trace, not from brightness,
+        so a faint tip -- or a root already there at frame 0 -- is kept whatever its intensity."""
+        keep = np.zeros(crop.shape[:2], np.uint8)
+        cv2.rectangle(keep, (int(self.final_x1 + ox - margin), int(self.final_y1 + oy - margin)),
+                      (int(self.final_x2 + ox + margin), int(self.final_y2 + oy + margin)), 1, -1)
+        pts = [(int(c[0] + ox), int(c[1] + oy)) for c in self.tip_coords_pcv[:x + 1] if c[0] != 10000]
+        if len(pts) > 1: cv2.polylines(keep, [np.array(pts, np.int32)], False, 1, 2 * margin)
+        elif pts: cv2.circle(keep, pts[0], margin, 1, -1)
+        return keep.astype(bool)
+
+    @staticmethod
+    def _suppress_faint(crop, keep, lo : int = 10, hi : int = 30, keep_lo : int = 3, keep_hi : int = 12):
+        """Fade faint pixels to black, relative to each frame's own background (the crop's median,
+        mostly agar), so it follows exposure: ramp from background + lo (removed) to + hi (kept).
+        Inside `keep` (seed + traced root) the ramp is far gentler, keep_lo..keep_hi, so the agar goes
+        black there too -- no grey box or halo -- while the root stays whole. Measured on box 14: agar
+        ~20, reflections 29-40, root body 56-67 and its faintest tip 36-39, i.e. >= background + 16."""
+        bg = float(np.median(crop)); c = crop.astype(np.float32) - bg
+        w = np.clip((c - lo) / (hi - lo), 0, 1)
+        w[keep] = np.clip((c[keep] - keep_lo) / (keep_hi - keep_lo), 0, 1)
+        return (crop * w).astype(np.uint8)
 
     def video_end(self):
         if self._video["writer"] is None: return
